@@ -1,0 +1,12 @@
+# 可选：把定时任务作为 systemd service 手动触发
+# systemctl start opencode-relay-cron.service
+[Unit]
+Description=OpenCode Free Relay cron
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/opencode-relay
+ExecStart=/usr/bin/php /var/www/opencode-relay/bin/cron.php all

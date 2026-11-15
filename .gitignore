@@ -1,0 +1,11 @@
+/.env
+/storage/logs/*.log
+/storage/cache/*
+/storage/sessions/*
+/vendor/
+.phpunit.result.cache
+Thumbs.db
+.DS_Store
+
+/tests/mock-upstream.log
+/tests/*.log

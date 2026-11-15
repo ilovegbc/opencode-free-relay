@@ -1,0 +1,8 @@
+# /etc/ndppd.conf — replace eth0 and the prefix with your own values.
+# Only needed when the provider routes a /64 on-link and you must proxy NDP.
+route-eth0 {
+    iface eth0
+    static {
+        YOUR_PREFIX::/64
+    }
+}

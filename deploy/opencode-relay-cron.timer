@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly OpenCode Free Relay model sync + daily cleanup
+
+[Timer]
+# 每小时刷新免费模型；CronService 内部还会按 settings.models.sync_interval 判断是否到期。
+OnCalendar=hourly
+RandomizedDelaySec=120
+Persistent=true
+
+[Install]
+WantedBy=timers.target
