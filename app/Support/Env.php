@@ -68,8 +68,11 @@ final class Env
         }
 
         foreach (self::$values as $key => $value) {
-            if (getenv($key) === false) {
-                putenv($key . '=' . $value);
+            // Some shared hosts (BT Panel, cPanel) disable putenv() through
+            // disable_functions. The values are still available through the
+            // static map and $_ENV/$_SERVER, so never fatal on this.
+            if (getenv($key) === false && function_exists('putenv')) {
+                @putenv($key . '=' . $value);
             }
             $_ENV[$key] ??= $value;
             $_SERVER[$key] ??= $value;

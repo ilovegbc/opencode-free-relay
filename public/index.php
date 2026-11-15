@@ -139,7 +139,7 @@ $router->post('/admin/codes/invites/{id}/disable', [new CodeController(), 'disab
 $router->post('/admin/codes/redemptions/{id}/disable', [new CodeController(), 'disableRedemption']);
 
 $router->get('/admin/logs', [new AdminLogController(), 'requests']);
-$router->get('/admin/audit', [new AdminLogController(), 'audit']);
+$router->get('/admin/audit', [new AdminLogController(), 'auditLogs']);
 
 // ---------------------------------------------------------------------------
 // Dispatch + error rendering

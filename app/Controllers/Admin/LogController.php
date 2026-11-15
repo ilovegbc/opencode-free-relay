@@ -36,7 +36,7 @@ final class LogController extends Controller
         ], 'layouts/admin');
     }
 
-    public function audit(Request $request): never
+    public function auditLogs(Request $request): never
     {
         Auth::requireAdmin();
         $page = $this->page($request, 50);
