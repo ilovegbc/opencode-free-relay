@@ -16,20 +16,19 @@ final class Settings
     /** @var array<string,mixed> */
     private const DEFAULTS = [
         'site.name' => 'OpenCode Free Relay',
-        'site.tagline' => '兼容 OpenAI 的 OpenCode 免费模型中转，按请求轮换 IPv6 出口。',
-        'site.description' => '自托管 OpenCode 免费模型中转站。每次上游请求都会分配新的 IPv6 地址，绝不回退 IPv4。',
+        'site.tagline' => '兼容 OpenAI 的 OpenCode 免费模型中转。',
+        'site.description' => 'OpenCode 免费模型中转站，兼容 OpenAI 接口，注册即可使用。',
         'site.registration_mode' => 'open', // open | invite | closed
         'site.require_approval' => false,
         'site.public_model_list' => true,
         'site.default_plan' => 'free',
-        'site.welcome_credits' => 0,
         'site.announcement_enabled' => true,
         'upstream.base_url' => 'https://opencode.ai/inference',
         'upstream.models_url' => 'https://opencode.ai/inference/v1/models',
         'upstream.key' => 'public',
         'upstream.client_name' => 'cli',
         'upstream.client_channel' => 'latest',
-        'upstream.client_version' => '2.3.0',
+        'upstream.client_version' => '1.19.6',
         'upstream.user_agent' => '',
         'upstream.max_ip_retries' => 2,
         'upstream.connect_timeout' => 15,
@@ -51,10 +50,6 @@ final class Settings
         'ipv6.probe_url' => 'https://opencode.ai/inference/v1/models',
         'ipv6.bind_method' => 'interface', // interface | opensocket
         'security.cors_origin' => '*',
-        'billing.credits_per_request_default' => 0,
-        'billing.credits_per_1k_input_default' => 0,
-        'billing.credits_per_1k_output_default' => 0,
-        'billing.min_balance_to_use' => 0,
         'security.allow_registration' => true,
         'security.login_max_attempts' => 10,
         'security.login_window_minutes' => 15,
@@ -65,6 +60,15 @@ final class Settings
         'logging.log_retention_days' => 30,
         'logging.lease_retention_days' => 7,
         'cron.secret' => '',
+        'mail.enabled' => false,
+        'mail.host' => '',
+        'mail.port' => 587,
+        'mail.encryption' => 'tls', // none | tls | ssl
+        'mail.username' => '',
+        'mail.password' => '',
+        'mail.from_address' => '',
+        'mail.from_name' => '',
+        'mail.verify_ttl_minutes' => 60,
         'branding.footer' => 'OpenCode Free Relay · MIT 开源 · IPv6 only',
     ];
 
@@ -113,6 +117,11 @@ final class Settings
             'upstream.stream_include_usage' => $upstream['stream_include_usage'] ?? null,
             'upstream.prompt_cache_key' => $upstream['prompt_cache_key'] ?? null,
             'upstream.mirror_client_headers' => $upstream['mirror_client_headers'] ?? null,
+            'upstream.shape_requests' => $upstream['shape_requests'] ?? null,
+            'upstream.shape_resources_dir' => $upstream['shape_resources_dir'] ?? null,
+            'upstream.project_id' => $upstream['project_id'] ?? null,
+            'upstream.bridge_url' => $upstream['bridge_url'] ?? null,
+            'upstream.bridge_token' => $upstream['bridge_token'] ?? null,
             'upstream.allow_http' => $upstream['allow_http'] ?? null,
             'upstream.verify_tls' => $upstream['verify_tls'] ?? null,
             'upstream.allowed_hosts' => isset($upstream['allowed_hosts']) && is_array($upstream['allowed_hosts'])

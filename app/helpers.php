@@ -110,17 +110,6 @@ if (!function_exists('format_number')) {
     }
 }
 
-if (!function_exists('format_credits')) {
-    function format_credits(int|float|string|null $value): string
-    {
-        $value = (float) ($value ?? 0);
-        if (abs($value - round($value)) < 0.000001) {
-            return number_format($value, 0);
-        }
-        return rtrim(rtrim(number_format($value, 4), '0'), '.');
-    }
-}
-
 if (!function_exists('format_dt')) {
     function format_dt(?string $value, string $format = 'Y-m-d H:i:s'): string
     {

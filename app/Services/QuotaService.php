@@ -79,11 +79,6 @@ final class QuotaService
                 throw new QuotaException('Daily token quota reached. It resets at 00:00 UTC.', 'daily_token_limit');
             }
 
-            $minBalance = (float) $this->settings->get('billing.min_balance_to_use', 0);
-            if ($minBalance > 0 && (float) ($user['balance'] ?? 0) < $minBalance) {
-                throw new QuotaException('Insufficient credit balance.', 'insufficient_balance');
-            }
-
             $this->db->execute(
                 'UPDATE usage_daily SET reserved_requests = reserved_requests + 1, updated_at = now()
                  WHERE user_id = ? AND day = ?::date',
@@ -100,46 +95,31 @@ final class QuotaService
     }
 
     /** @param array<string,mixed> $usage */
-    public function commit(Reservation $reservation, array $usage, float $credits): void
+    public function commit(Reservation $reservation, array $usage): void
     {
         $input = max(0, (int) ($usage['input_tokens'] ?? 0));
         $output = max(0, (int) ($usage['output_tokens'] ?? 0));
         $total = max(0, (int) ($usage['total_tokens'] ?? ($input + $output)));
         $cached = max(0, (int) ($usage['cached_tokens'] ?? 0));
-        $credits = round(max(0, $credits), 6);
 
-        $this->db->transaction(function () use ($reservation, $input, $output, $total, $cached, $credits): void {
+        $this->db->transaction(function () use ($reservation, $input, $output, $cached): void {
             $this->db->execute(
                 'UPDATE usage_daily SET
                     reserved_requests = GREATEST(0, reserved_requests - 1),
                     requests = requests + 1,
                     input_tokens = input_tokens + ?,
                     output_tokens = output_tokens + ?,
-                    credits = credits + ?,
                     updated_at = now()
                  WHERE user_id = ? AND day = ?::date',
-                [$input, $output, $credits, $reservation->userId, $reservation->day]
+                [$input, $output, $reservation->userId, $reservation->day]
             );
             $this->db->execute(
                 'UPDATE users SET total_requests = total_requests + 1,
                     total_input_tokens = total_input_tokens + ?,
-                    total_output_tokens = total_output_tokens + ?,
-                    total_credits_used = total_credits_used + ?
+                    total_output_tokens = total_output_tokens + ?
                  WHERE id = ?',
-                [$input, $output, $credits, $reservation->userId]
+                [$input, $output, $reservation->userId]
             );
-            if ($credits > 0) {
-                $row = $this->db->fetch('SELECT balance FROM users WHERE id = ? FOR UPDATE', [$reservation->userId]);
-                if ($row !== null) {
-                    $balance = (float) $row['balance'] - $credits;
-                    $this->db->execute('UPDATE users SET balance = ? WHERE id = ?', [$balance, $reservation->userId]);
-                    $this->db->execute(
-                        'INSERT INTO credit_transactions (user_id, amount, balance_after, kind, reference, note)
-                         VALUES (?, ?, ?, \'usage\', ?, ?)',
-                        [$reservation->userId, -$credits, $balance, $reservation->requestId, 'Model usage']
-                    );
-                }
-            }
             $this->db->execute('DELETE FROM active_requests WHERE request_id = ?::uuid', [$reservation->requestId]);
             $this->db->execute('UPDATE api_keys SET last_used_at = now(), request_count = request_count + 1 WHERE id = ?', [$reservation->apiKeyId]);
         });
@@ -174,7 +154,6 @@ final class QuotaService
             'requests' => 0,
             'input_tokens' => 0,
             'output_tokens' => 0,
-            'credits' => 0,
             'reserved_requests' => 0,
         ];
     }

@@ -71,7 +71,15 @@ final class App
     public static function asset(string $path): string
     {
         $path = ltrim($path, '/');
+        // 静态资源实际放在 public/assets/ 下，版本号取该文件的 mtime，
+        // 否则永远是 v=1，手机端会一直用缓存里的旧样式。
         $file = self::$basePath . '/public/' . $path;
+        if (!is_file($file)) {
+            $alt = self::$basePath . '/public/assets/' . $path;
+            if (is_file($alt)) {
+                $file = $alt;
+            }
+        }
         $version = is_file($file) ? (string) filemtime($file) : '1';
         return self::url('/assets/' . $path) . '?v=' . rawurlencode($version);
     }

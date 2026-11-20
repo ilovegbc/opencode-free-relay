@@ -18,7 +18,6 @@ use Relay\Controllers\Web\AuthController;
 use Relay\Controllers\Web\DashboardController;
 use Relay\Controllers\Web\DocsController;
 use Relay\Controllers\Web\HomeController;
-use Relay\Controllers\Web\StatusController;
 use Relay\Http\HttpException;
 use Relay\Http\Request;
 use Relay\Http\Response;
@@ -75,11 +74,11 @@ $router->post('/v1/responses', [new ChatController(), 'responses']);
 // ---------------------------------------------------------------------------
 $router->get('/', [new HomeController(), 'index']);
 $router->get('/docs', [new DocsController(), 'index']);
-$router->get('/status', [new StatusController(), 'index']);
 $router->get('/login', [new AuthController(), 'loginForm']);
 $router->post('/login', [new AuthController(), 'login']);
 $router->get('/register', [new AuthController(), 'registerForm']);
 $router->post('/register', [new AuthController(), 'register']);
+$router->get('/verify-email', [new AuthController(), 'verifyEmail']);
 $router->post('/logout', [new AuthController(), 'logout']);
 $router->get('/logout', [new AuthController(), 'logout']);
 
@@ -89,12 +88,14 @@ $router->get('/logout', [new AuthController(), 'logout']);
 $router->get('/dashboard', [new DashboardController(), 'index']);
 $router->get('/dashboard/keys', [new DashboardController(), 'keys']);
 $router->post('/dashboard/keys', [new DashboardController(), 'createKey']);
-$router->post('/dashboard/keys/{id}/revoke', [new DashboardController(), 'revokeKey']);
+$router->post('/dashboard/keys/{id}/delete', [new DashboardController(), 'deleteKey']);
 $router->get('/dashboard/usage', [new DashboardController(), 'usage']);
-$router->get('/dashboard/redeem', [new DashboardController(), 'redeemForm']);
-$router->post('/dashboard/redeem', [new DashboardController(), 'redeem']);
+$router->get('/dashboard/invites', [new DashboardController(), 'invites']);
+$router->post('/dashboard/invites', [new DashboardController(), 'createInvite']);
+$router->post('/dashboard/invites/{id}/disable', [new DashboardController(), 'disableInvite']);
 $router->get('/dashboard/settings', [new DashboardController(), 'settings']);
 $router->post('/dashboard/settings/password', [new DashboardController(), 'updatePassword']);
+$router->post('/dashboard/settings/delete', [new DashboardController(), 'deleteAccount']);
 
 // ---------------------------------------------------------------------------
 // Admin
@@ -112,9 +113,9 @@ $router->get('/admin/users', [new AdminUserController(), 'index']);
 $router->post('/admin/users', [new AdminUserController(), 'create']);
 $router->get('/admin/users/{id}', [new AdminUserController(), 'show']);
 $router->post('/admin/users/{id}', [new AdminUserController(), 'update']);
-$router->post('/admin/users/{id}/balance', [new AdminUserController(), 'balance']);
+$router->post('/admin/users/{id}/delete', [new AdminUserController(), 'destroy']);
 $router->post('/admin/users/{id}/keys', [new AdminUserController(), 'createKey']);
-$router->post('/admin/users/{userId}/keys/{id}/revoke', [new AdminUserController(), 'revokeKey']);
+$router->post('/admin/users/{userId}/keys/{id}/delete', [new AdminUserController(), 'deleteKey']);
 
 $router->get('/admin/pools', [new AdminPoolController(), 'index']);
 $router->post('/admin/pools', [new AdminPoolController(), 'create']);
@@ -131,12 +132,11 @@ $router->post('/admin/models/{id}', [new AdminModelController(), 'update']);
 $router->get('/admin/plans', [new AdminPlanController(), 'index']);
 $router->post('/admin/plans', [new AdminPlanController(), 'create']);
 $router->post('/admin/plans/{id}', [new AdminPlanController(), 'update']);
+$router->post('/admin/plans/{id}/delete', [new AdminPlanController(), 'destroy']);
 
 $router->get('/admin/codes', [new CodeController(), 'index']);
 $router->post('/admin/codes/invites', [new CodeController(), 'createInvite']);
-$router->post('/admin/codes/redemptions', [new CodeController(), 'createRedemption']);
 $router->post('/admin/codes/invites/{id}/disable', [new CodeController(), 'disableInvite']);
-$router->post('/admin/codes/redemptions/{id}/disable', [new CodeController(), 'disableRedemption']);
 
 $router->get('/admin/logs', [new AdminLogController(), 'requests']);
 $router->get('/admin/audit', [new AdminLogController(), 'auditLogs']);
@@ -178,6 +178,10 @@ try {
     ], 'layouts/app'), $e->status);
 } catch (UpstreamException $e) {
     $status = in_array($e->upstreamStatus, [400, 404, 422, 429], true) ? $e->upstreamStatus : 502;
+    if ($e->upstreamStatus === 410) {
+        // 模型已被上游下架：404 比 502 更能让客户端换模型。
+        $status = 404;
+    }
     if ($e->errorCode === 'free_usage_limit') {
         $status = 429;
     }
@@ -200,13 +204,15 @@ try {
         'details' => null,
     ], 'layouts/app'), $status);
 } catch (Ipv6UnavailableException $e) {
+    Logger::warning('Source address unavailable', ['reason' => $e->reason, 'detail' => $e->getMessage()]);
+    $message = 'Service temporarily unavailable. Please try again later.';
     if ($isApi) {
-        Response::apiError($e->getMessage(), 'server_error', $e->reason, 503);
+        Response::apiError($message, 'server_error', 'service_unavailable', 503);
     }
     Response::html(View::render('errors/error', [
-        'title' => 'IPv6 unavailable',
+        'title' => 'Service unavailable',
         'status' => 503,
-        'message' => $e->getMessage(),
+        'message' => $message,
         'details' => null,
     ], 'layouts/app'), 503);
 } catch (Throwable $e) {

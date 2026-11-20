@@ -68,11 +68,10 @@ final class Env
         }
 
         foreach (self::$values as $key => $value) {
-            // Some shared hosts (BT Panel, cPanel) disable putenv() through
-            // disable_functions. The values are still available through the
-            // static map and $_ENV/$_SERVER, so never fatal on this.
+            // Some hardened PHP-FPM builds (e.g. BT panel disable_functions)
+            // block putenv(); values still resolve through self::$values below.
             if (getenv($key) === false && function_exists('putenv')) {
-                @putenv($key . '=' . $value);
+                putenv($key . '=' . $value);
             }
             $_ENV[$key] ??= $value;
             $_SERVER[$key] ??= $value;

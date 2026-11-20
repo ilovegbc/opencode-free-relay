@@ -66,10 +66,15 @@ if ($version === null) {
 }
 
 if (!is_string($version) || !preg_match('/^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/', $version)) {
-    fwrite(STDERR, "Could not resolve a version. Use: php bin/sync-client-version.php --version=2.3.0\n");
+    fwrite(STDERR, "Could not resolve a version. Use: php bin/sync-client-version.php --version=1.19.6\n");
     exit(1);
 }
 
 App::settings()->set('upstream.client_version', $version);
 echo "Updated upstream.client_version to {$version}.\n";
-echo "Effective User-Agent: opencode/" . App::settings()->string('upstream.client_channel', 'latest') . "/{$version}/" . App::settings()->string('upstream.client_name', 'cli') . "\n";
+$ua = trim(App::settings()->string('upstream.user_agent', ''));
+if ($ua === '') {
+    $ua = 'opencode/1.19.6 ai-sdk/provider-utils/4.0.23 runtime/bun/1.4.4';
+}
+echo "Effective User-Agent: {$ua}\n";
+echo "Note: upstream.user_agent is sent as-is; update it separately when the official CLI UA changes.\n";

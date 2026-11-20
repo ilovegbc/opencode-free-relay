@@ -55,10 +55,6 @@ final class ModelController extends Controller
         }
         $data = [
             'enabled' => (string) $request->post('enabled', '0') === '1',
-            'credit_per_request' => max(0, (float) $request->post('credit_per_request', 0)),
-            'credit_per_1k_input' => max(0, (float) $request->post('credit_per_1k_input', 0)),
-            'credit_per_1k_output' => max(0, (float) $request->post('credit_per_1k_output', 0)),
-            'credit_multiplier' => max(0.0001, (float) $request->post('credit_multiplier', 1)),
             'sort_order' => (int) $request->post('sort_order', 0),
         ];
         $repo->updateConfig($id, $data);

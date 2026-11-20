@@ -78,14 +78,14 @@ final class DashboardController extends Controller
         Response::redirect('/dashboard/keys');
     }
 
-    public function revokeKey(Request $request, array $params): never
+    public function deleteKey(Request $request, array $params): never
     {
         $user = Auth::requireUser();
         $this->validateCsrf($request);
         $id = (int) ($params['id'] ?? 0);
-        if ((new ApiKeyRepository(App::db()))->revoke($id, (int) $user['id'])) {
-            $this->audit('api_key.revoke', 'api_key', (string) $id);
-            flash('success', 'API key revoked.');
+        if ((new ApiKeyRepository(App::db()))->delete($id, (int) $user['id'])) {
+            $this->audit('api_key.delete', 'api_key', (string) $id);
+            flash('success', 'API Key 已删除，立即失效。');
         } else {
             flash('error', 'Key not found.');
         }
@@ -110,28 +110,45 @@ final class DashboardController extends Controller
         ]);
     }
 
-    public function redeemForm(Request $request): never
+    public function invites(Request $request): never
     {
-        Auth::requireUser();
-        $this->render('dashboard/redeem', ['activeNav' => 'redeem']);
+        $user = Auth::requireUser();
+        $codes = new CodeRepository(App::db());
+        $this->render('dashboard/invites', [
+            'activeNav' => 'invites',
+            'invites' => $codes->invitesForUser((int) $user['id']),
+            'newCode' => Session::pull('new_invite_code'),
+        ]);
     }
 
-    public function redeem(Request $request): never
+    public function createInvite(Request $request): never
     {
         $user = Auth::requireUser();
         $this->validateCsrf($request);
-        $code = trim((string) $request->post('code', ''));
-        if ($code === '') {
-            throw new ValidationException('Enter a redemption code.');
-        }
-        $result = (new CodeRepository(App::db()))->redeem($code, (int) $user['id']);
-        if ($result === null) {
-            flash('error', 'That code is invalid, expired, exhausted, or already used by you.');
+        $created = (new CodeRepository(App::db()))->createInvite([
+            'label' => trim((string) $request->post('label', '')),
+            'plan_id' => null,
+            'expires_at' => null,
+            'active' => true,
+        ], (int) $user['id']);
+        Session::put('new_invite_code', $created['code']);
+        $this->audit('invite.create', 'invite', (string) $created['row']['id']);
+        flash('success', '邀请码已生成。复制保存，只显示一次。');
+        Response::redirect('/dashboard/invites');
+    }
+
+    public function disableInvite(Request $request, array $params): never
+    {
+        $user = Auth::requireUser();
+        $this->validateCsrf($request);
+        $id = (int) ($params['id'] ?? 0);
+        if ((new CodeRepository(App::db()))->disableInviteForUser($id, (int) $user['id'])) {
+            $this->audit('invite.disable', 'invite', (string) $id);
+            flash('success', '邀请码已停用。');
         } else {
-            $this->audit('credit.redeem', 'user', (string) $user['id'], ['credits' => $result['credits']]);
-            flash('success', 'Redeemed ' . format_credits($result['credits']) . ' credits. New balance: ' . format_credits($result['balance']) . '.');
+            flash('error', '邀请码不存在。');
         }
-        Response::redirect('/dashboard/redeem');
+        Response::redirect('/dashboard/invites');
     }
 
     public function settings(Request $request): never
@@ -161,5 +178,29 @@ final class DashboardController extends Controller
         $this->audit('user.password_change', 'user', (string) $user['id']);
         flash('success', 'Password updated.');
         Response::redirect('/dashboard/settings');
+    }
+
+    public function deleteAccount(Request $request): never
+    {
+        $user = Auth::requireUser();
+        $this->validateCsrf($request);
+        $password = (string) $request->post('password', '');
+        if (!Crypto::passwordVerify($password, (string) $user['password_hash'])) {
+            flash('error', '当前密码不正确，账户未删除。');
+            Response::redirect('/dashboard/settings');
+        }
+        if ((string) $request->post('confirm', '') !== 'DELETE') {
+            flash('error', '请在确认框输入 DELETE 后再提交。');
+            Response::redirect('/dashboard/settings');
+        }
+        $repo = new UserRepository(App::db());
+        if (($user['role'] ?? 'user') === 'admin' && $repo->countAdmins() <= 1) {
+            flash('error', '这是最后一个管理员账户，无法注销。');
+            Response::redirect('/dashboard/settings');
+        }
+        $this->audit('user.self_delete', 'user', (string) $user['id'], ['username' => $user['username']]);
+        $repo->delete((int) $user['id']);
+        Auth::logout();
+        Response::redirect('/login');
     }
 }

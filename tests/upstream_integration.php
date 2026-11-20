@@ -17,11 +17,13 @@ $settings = new Settings(App::db(), [], false, [
     'upstream.key' => 'public',
     'upstream.client_name' => 'cli',
     'upstream.client_channel' => 'latest',
-    'upstream.client_version' => '2.3.0',
+    'upstream.client_version' => '1.19.6',
+    'upstream.user_agent' => 'opencode/1.19.6 ai-sdk/provider-utils/4.0.23 runtime/bun/1.4.4',
     'upstream.timeout' => 15,
     'upstream.connect_timeout' => 5,
     'upstream.stream_include_usage' => true,
-    'upstream.prompt_cache_key' => true,
+    'upstream.prompt_cache_key' => false,
+    'upstream.shape_requests' => true,
     'upstream.mirror_client_headers' => true,
     'ipv6.bind_method' => 'interface',
 ]);
@@ -38,7 +40,7 @@ $identity = new RelayIdentity(
     'prj_test',
     null,
     'cli',
-    'opencode/latest/2.3.0/cli'
+    'opencode/1.19.6 ai-sdk/provider-utils/4.0.23 runtime/bun/1.4.4'
 );
 $client = new OpenCodeClient($settings);
 $body = [
@@ -70,7 +72,7 @@ $result2 = $client->send($body, $model, '::1', $identity, false);
 $check($result2->status === 200, 'non-stream status should be 200, got ' . $result2->status . ' / ' . ($result2->errorMessage ?? ''));
 $decoded = json_decode($result2->body, true);
 $check(($decoded['choices'][0]['message']['content'] ?? '') === 'Hello from mock', 'non-stream body');
-$check(($decoded['usage']['total_tokens'] ?? 0) === 13, 'non-stream usage');
+$check(($decoded['usage']['total_tokens'] ?? 0) === 18, 'non-stream usage from the reassembled SSE');
 
 $logFile = __DIR__ . '/mock-upstream.log';
 $lines = is_file($logFile) ? file($logFile, FILE_IGNORE_NEW_LINES) : [];
@@ -88,12 +90,19 @@ $headers = is_array($streamRecord) ? array_change_key_case($streamRecord['header
 $requestBody = is_array($streamRecord) ? ($streamRecord['body'] ?? []) : [];
 $check(($headers['authorization'] ?? '') === 'Bearer public', 'upstream Authorization should be Bearer public');
 $check(($headers['x-opencode-client'] ?? '') === 'cli', 'x-opencode-client should be cli');
-$check(($headers['user-agent'] ?? '') === 'opencode/latest/2.3.0/cli', 'User-Agent should match official client');
-$check(($headers['x-session-affinity'] ?? '') === $identity->affinity, 'x-session-affinity should be forwarded');
-$check(($requestBody['prompt_cache_key'] ?? '') === $identity->promptCacheKey, 'prompt_cache_key should be injected');
+$check(($headers['user-agent'] ?? '') === 'opencode/1.19.6 ai-sdk/provider-utils/4.0.23 runtime/bun/1.4.4', 'User-Agent should match official client');
+$check(($headers['x-opencode-session'] ?? '') === $identity->affinity, 'x-opencode-session should be forwarded');
+$check(($headers['x-opencode-session-id'] ?? '') === $identity->sessionId, 'x-opencode-session-id should be forwarded');
+$check(!isset($headers['x-session-affinity']), 'non-official headers should not be sent');
+$check(!isset($requestBody['prompt_cache_key']), 'prompt_cache_key must not be injected');
 $check(($requestBody['stream_options']['include_usage'] ?? false) === true, 'include_usage should be added for chat streams');
-$check(($requestBody['messages'][0]['content'] ?? '') === 'hello', 'messages must not be modified');
-$check(($requestBody['system'] ?? null) === null, 'no system prompt should be added');
+$systemText = (string) ($requestBody['messages'][0]['content'] ?? '');
+$check(str_starts_with($systemText, 'You are opencode'), 'official agent prompt must be the system prefix');
+$check(!str_contains($systemText, 'hello'), 'client user text must not leak into the system prompt');
+$check(($requestBody['messages'][1]['content'] ?? '') === 'hello', 'user messages are preserved');
+$check(($requestBody['stream'] ?? false) === true, 'upstream stream is always enabled');
+$toolNames = array_map(static fn (array $tool): string => (string) ($tool['function']['name'] ?? ''), (array) ($requestBody['tools'] ?? []));
+$check(in_array('read', $toolNames, true), 'official read tool must be injected');
 
 if ($failures !== []) {
     foreach ($failures as $failure) {

@@ -43,9 +43,9 @@ $curl = "curl {$base}/chat/completions \\\n  -H \"Authorization: Bearer sk-oc-..
         <div class="progress" style="margin-top:.55rem"><span style="width:<?= $dailyTok > 0 ? e((string) percent($usedTok, $dailyTok)) : '0' ?>%"></span></div>
     </div>
     <div class="kpi">
-        <div class="label">积分余额</div>
-        <div class="value"><?= e(format_credits($user['balance'] ?? 0)) ?></div>
-        <div class="hint">套餐：<?= e($plan['name'] ?? '未分配') ?> · <?= e((string) ($plan['rpm'] ?? 0)) ?> RPM · <?= e((string) ($plan['concurrency'] ?? 0)) ?> 并发</div>
+        <div class="label">套餐</div>
+        <div class="value" style="font-size:1.1rem"><?= e($plan['name'] ?? '未分配') ?></div>
+        <div class="hint">每日 <?= $dailyReq >= 0 ? e(format_number($dailyReq)) . ' 次请求' : '不限请求' ?> · <?= e((string) ($plan['rpm'] ?? 0)) ?> RPM · <?= e((string) ($plan['concurrency'] ?? 0)) ?> 并发</div>
     </div>
     <div class="kpi">
         <div class="label">API Keys</div>
@@ -107,7 +107,7 @@ $curl = "curl {$base}/chat/completions \\\n  -H \"Authorization: Bearer sk-oc-..
         <div class="card">
             <div class="card-header"><h3>可用免费模型</h3><span class="badge green"><?= e((string) count($models)) ?></span></div>
             <?php if (empty($models)): ?>
-                <p class="muted small">模型目录尚未同步。管理员可在后台点击“立即同步”。</p>
+                <p class="muted small">当前暂无可用模型，请稍后再试。</p>
             <?php else: ?>
                 <div class="tag-list">
                     <?php foreach (array_slice($models, 0, 12) as $model): ?>
@@ -119,8 +119,8 @@ $curl = "curl {$base}/chat/completions \\\n  -H \"Authorization: Bearer sk-oc-..
         <div class="card">
             <div class="card-header"><h3>快捷操作</h3></div>
             <div class="button-row" style="flex-direction:column;align-items:stretch">
-                <a class="button ghost small" href="<?= e(url('/dashboard/keys')) ?>">创建 / 吊销 Key</a>
-                <a class="button ghost small" href="<?= e(url('/dashboard/redeem')) ?>">兑换积分</a>
+                <a class="button ghost small" href="<?= e(url('/dashboard/keys')) ?>">创建 / 删除 Key</a>
+                <a class="button ghost small" href="<?= e(url('/dashboard/invites')) ?>">邀请码</a>
                 <a class="button ghost small" href="<?= e(url('/dashboard/settings')) ?>">修改密码</a>
             </div>
         </div>

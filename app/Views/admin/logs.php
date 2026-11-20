@@ -28,7 +28,7 @@
 
     <div class="table-wrap">
         <table>
-            <thead><tr><th>时间</th><th>用户</th><th>模型</th><th>状态</th><th>上游</th><th>出口 IPv6</th><th>尝试</th><th>Tokens</th><th>积分</th><th>延迟</th><th>错误</th></tr></thead>
+            <thead><tr><th>时间</th><th>用户</th><th>模型</th><th>状态</th><th>上游</th><th>出口 IPv6</th><th>尝试</th><th>Tokens</th><th>延迟</th><th>错误</th></tr></thead>
             <tbody>
             <?php foreach ($logs as $log): ?>
                 <tr>
@@ -40,12 +40,11 @@
                     <td class="small mono"><?= e($log['ip_address'] ?? '—') ?></td>
                     <td class="small"><?= e((string) $log['attempt_count']) ?></td>
                     <td class="small"><?= e(format_number((int) $log['total_tokens'])) ?></td>
-                    <td class="small"><?= e(format_credits($log['credits'])) ?></td>
                     <td class="small"><?= e((string) $log['latency_ms']) ?>ms</td>
                     <td class="small muted"><?= e(mb_substr((string) ($log['error_code'] ?? ''), 0, 40)) ?></td>
                 </tr>
             <?php endforeach; ?>
-            <?php if (empty($logs)): ?><tr><td colspan="11" class="muted">没有匹配的记录。</td></tr><?php endif; ?>
+            <?php if (empty($logs)): ?><tr><td colspan="10" class="muted">没有匹配的记录。</td></tr><?php endif; ?>
             </tbody>
         </table>
     </div>

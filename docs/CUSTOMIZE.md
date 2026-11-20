@@ -23,8 +23,9 @@ Hook::on('relay.upstream.headers', function (array $headers, $identity): array {
 
 ```php
 Hook::on('relay.upstream.body', function (array $body, array $model): array {
-    // 注意：不要修改 system / messages / tools，
-    // 否则会破坏“与官方客户端一致”的承诺。
+    // 这个 Hook 在请求塑形之后执行：body 里已经是
+    // “官方前缀 + 作废声明 + 调用方 system” 以及补齐后的 tools。
+    // 如需在塑形前处理原始请求，请在控制器层扩展。
     return $body;
 });
 ```
@@ -81,39 +82,31 @@ ON CONFLICT (alias) DO UPDATE SET model_id = EXCLUDED.model_id;
 - `rpm`：每分钟请求数
 - `concurrency`：并发请求数
 - `allowed_models`：`NULL` 表示全部；否则是模型 ID 数组
-- `discount_multiplier`：积分折扣倍率
+- `discount_multiplier`：旧版积分折扣字段，v1.1 不再使用
 
 默认套餐在 `plans.is_default = true`。注册时使用该套餐。
 
-## 5. 计费公式
+## 5. 请求塑形与思考档位
 
-`BillingService::calculate()`：
-
-```text
-cost = (request_cost
-      + input_tokens / 1000 * input_rate
-      + output_tokens / 1000 * output_rate)
-      * model_multiplier
-      * plan_discount
-```
-
-默认全部为 0，也就是免费。需要运营时可在模型编辑页或设置页调整。
+- `Relay\Services\PromptShaper` 负责免费通道的形状准入：官方前缀、`read` 工具、`tool_choice` 与工具 schema 规范化。资源文件不在仓库中，路径由 `upstream.shape_resources_dir` 指定。
+- `Relay\Services\Thinking` 负责把各种客户端写法归一化为 `reasoning_effort`；档位来自模型同步写入的 `model_catalog.thinking`。
+- 如需替换塑形逻辑，可实现自己的 shaper 并注入 `OpenCodeClient`；保留“前缀逐字不改、调用方指令在后”的顺序。
+- `upstream.shape_requests=false` 会完全关闭塑形，仅保留 chat 强流式。
 
 ## 6. 替换上游客户端
 
 `Relay\Services\OpenCodeClient` 是唯一直接发起上游 HTTP 的地方。替换时请保留：
 
-- `CURLOPT_IPRESOLVE = CURL_IPRESOLVE_V6`
-- 源地址绑定（`CURLOPT_INTERFACE` / opensocket）
-- 禁用重定向与代理
-- 官方身份头与 `prompt_cache_key`
-- 流式写回调
+- 直连模式：`CURLOPT_IPRESOLVE = CURL_IPRESOLVE_V6`、源地址绑定、禁用重定向与代理
+- 桥接模式：`POST {bridge_url}/forward` 的信封格式与 `x-bridge-token`
+- 官方身份头与 canonical session
+- 流式写回调；chat 非流式由 `SseAggregator` 重组
 
 `RelayService` 只依赖它的 `send()` 返回 `UpstreamResult`。
 
 ## 7. 数据库扩展
 
-新增表建议放到 `database/migrations/003_xxx.sql`，然后：
+新增表请接着现有编号放到 `database/migrations/005_xxx.sql`，然后：
 
 ```bash
 php bin/migrate.php

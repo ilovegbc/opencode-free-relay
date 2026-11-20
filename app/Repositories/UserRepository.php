@@ -17,7 +17,7 @@ final class UserRepository
     {
         return $this->db->fetch(
             'SELECT u.*, p.code AS plan_code, p.name AS plan_name, p.daily_requests, p.daily_tokens,
-                    p.rpm, p.concurrency, p.allowed_models, p.discount_multiplier
+                    p.rpm, p.concurrency, p.allowed_models
              FROM users u LEFT JOIN plans p ON p.id = u.plan_id
              WHERE u.id = ?',
             [$id]
@@ -28,7 +28,7 @@ final class UserRepository
     {
         return $this->db->fetch(
             'SELECT u.*, p.code AS plan_code, p.name AS plan_name, p.daily_requests, p.daily_tokens,
-                    p.rpm, p.concurrency, p.allowed_models, p.discount_multiplier
+                    p.rpm, p.concurrency, p.allowed_models
              FROM users u LEFT JOIN plans p ON p.id = u.plan_id
              WHERE lower(u.username) = lower(?) OR lower(u.email) = lower(?)
              LIMIT 1',
@@ -39,8 +39,8 @@ final class UserRepository
     public function create(array $data): array
     {
         $row = $this->db->fetch(
-            'INSERT INTO users (username, email, password_hash, role, status, plan_id, balance, invited_by, metadata)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)
+            'INSERT INTO users (username, email, password_hash, role, status, plan_id, invited_by, metadata)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb)
              RETURNING *',
             [
                 $data['username'],
@@ -49,7 +49,6 @@ final class UserRepository
                 $data['role'] ?? 'user',
                 $data['status'] ?? 'active',
                 $data['plan_id'] ?? null,
-                $data['balance'] ?? 0,
                 $data['invited_by'] ?? null,
                 json_encode($data['metadata'] ?? [], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
             ]
@@ -62,7 +61,7 @@ final class UserRepository
 
     public function update(int $id, array $fields): void
     {
-        $allowed = ['username', 'email', 'password_hash', 'role', 'status', 'plan_id', 'balance', 'metadata', 'last_login_at', 'last_ip'];
+        $allowed = ['username', 'email', 'password_hash', 'role', 'status', 'plan_id', 'metadata', 'last_login_at', 'last_ip'];
         $sets = [];
         $params = [];
         foreach ($allowed as $field) {
@@ -81,6 +80,16 @@ final class UserRepository
         }
         $params[] = $id;
         $this->db->execute('UPDATE users SET ' . implode(', ', $sets) . ' WHERE id = ?', $params);
+    }
+
+    public function delete(int $id): bool
+    {
+        return $this->db->execute('DELETE FROM users WHERE id = ?', [$id]) > 0;
+    }
+
+    public function countAdmins(): int
+    {
+        return (int) $this->db->scalar("SELECT count(*) FROM users WHERE role = 'admin'");
     }
 
     public function recordLogin(int $id, string $ip): void
@@ -119,24 +128,6 @@ final class UserRepository
             $params[] = '%' . $search . '%';
         }
         return (int) $this->db->scalar('SELECT count(*) FROM users ' . $where, $params);
-    }
-
-    public function adjustBalance(int $userId, float $delta, string $kind, string $note = '', ?int $actorId = null, string $reference = ''): float
-    {
-        return $this->db->transaction(function () use ($userId, $delta, $kind, $note, $actorId, $reference): float {
-            $row = $this->db->fetch('SELECT balance FROM users WHERE id = ? FOR UPDATE', [$userId]);
-            if ($row === null) {
-                throw new \RuntimeException('User not found.');
-            }
-            $new = (float) $row['balance'] + $delta;
-            $this->db->execute('UPDATE users SET balance = ? WHERE id = ?', [$new, $userId]);
-            $this->db->execute(
-                'INSERT INTO credit_transactions (user_id, amount, balance_after, kind, reference, note, created_by)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)',
-                [$userId, $delta, $new, $kind, $reference !== '' ? $reference : null, $note, $actorId]
-            );
-            return $new;
-        });
     }
 
     /** @return array<string,mixed> */

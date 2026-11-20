@@ -11,17 +11,23 @@ use Relay\Support\Settings;
 /**
  * HTTP client for OpenCode's inference gateway.
  *
- * Hard guarantees:
- *  - CURLOPT_IPRESOLVE is forced to CURL_IPRESOLVE_V6. There is no code path
- *    that attempts IPv4 after an IPv6 failure.
- *  - The local endpoint is bound to the allocated IPv6 address.
- *  - Redirects are disabled (a redirect cannot silently move us to IPv4).
- *  - Environment HTTP proxies are disabled.
+ * 传输层说明：opencode.ai 的免费通道会对客户端做传输层准入，站点自带的
+ * libcurl 7.29/NSS 即使请求体完全正确也只会拿到 429。因此默认走本机 Bun
+ * 桥接服务（bin/opencode-bridge.ts），由 Bun 的 TLS/HTTP2 栈代发请求。
+ * 未配置 bridge_url 时退回原有的直连模式（强制 IPv6 绑定）。
+ *
+ * 直连模式仍保留原有硬保证：
+ *  - CURLOPT_IPRESOLVE 强制 IPv6，没有 IPv4 回退路径；
+ *  - 本地端点绑定到分配的 IPv6 地址；
+ *  - 禁止重定向、禁用环境代理。
  */
 final class OpenCodeClient
 {
-    public function __construct(private Settings $settings)
+    private PromptShaper $shaper;
+
+    public function __construct(private Settings $settings, ?PromptShaper $shaper = null)
     {
+        $this->shaper = $shaper ?? new PromptShaper($settings);
     }
 
     /**
@@ -43,12 +49,41 @@ final class OpenCodeClient
             return new UpstreamResult(0, [], '', 0, 0, 0, $sourceIp, 'ipv6_bind_failed', 'Source address is not a valid IPv6 address.');
         }
 
+        $kind = (string) ($model['upstream_kind'] ?? 'chat');
         $url = $this->upstreamUrl($model);
-        $headers = $this->headers($identity, $stream);
-        $payload = $this->body($body, $model, $identity, $stream);
+        // 免费通道只接纳 streaming 请求；非流式调用方由这里重组。
+        $upstreamStream = $kind === 'chat' ? true : $stream;
+
+        $headers = $this->headers($identity, $upstreamStream);
+        $payload = $this->body($body, $model, $identity, $upstreamStream);
         $encoded = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         if (!is_string($encoded)) {
             return new UpstreamResult(0, [], '', 0, 0, 0, $sourceIp, 'invalid_request', 'Could not encode JSON request.');
+        }
+
+        $bridge = $this->bridgeUrl();
+        if ($bridge !== '') {
+            $target = rtrim($bridge, '/') . '/forward';
+            $envelope = json_encode(['url' => $url, 'headers' => $headers, 'body' => $encoded], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            if (!is_string($envelope)) {
+                return new UpstreamResult(0, [], '', 0, 0, 0, $sourceIp, 'invalid_request', 'Could not encode bridge request.');
+            }
+            $postFields = $envelope;
+            $headerLines = ['Content-Type: application/json'];
+            $token = $this->settings->string('upstream.bridge_token', '');
+            if ($token !== '') {
+                $headerLines[] = 'x-bridge-token: ' . $token;
+            }
+        } else {
+            $target = $url;
+            $postFields = $encoded;
+            $headerLines = [];
+            foreach ($headers as $name => $value) {
+                if ($value === '' || preg_match('/[\r\n]/', $value)) {
+                    continue;
+                }
+                $headerLines[] = $name . ': ' . $value;
+            }
         }
 
         $started = false;
@@ -60,22 +95,14 @@ final class OpenCodeClient
         $start = microtime(true);
         $bindError = null;
 
-        $ch = curl_init($url);
+        $ch = curl_init($target);
         if ($ch === false) {
             return new UpstreamResult(0, [], '', 0, 0, 0, $sourceIp, 'curl_init_failed', 'Could not initialise cURL.');
         }
 
-        $headerLines = [];
-        foreach ($headers as $name => $value) {
-            if ($value === '' || preg_match('/[\r\n]/', $value)) {
-                continue;
-            }
-            $headerLines[] = $name . ': ' . $value;
-        }
-
         curl_setopt_array($ch, [
             CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => $encoded,
+            CURLOPT_POSTFIELDS => $postFields,
             CURLOPT_HTTPHEADER => $headerLines,
             CURLOPT_RETURNTRANSFER => false,
             CURLOPT_HEADER => false,
@@ -83,15 +110,10 @@ final class OpenCodeClient
             CURLOPT_MAXREDIRS => 0,
             CURLOPT_PROXY => '',
             CURLOPT_NOPROXY => '*',
-            CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V6,
             CURLOPT_CONNECTTIMEOUT => max(1, $this->settings->int('upstream.connect_timeout', 15)),
             CURLOPT_TIMEOUT => max(30, $this->settings->int('upstream.timeout', 900)),
             CURLOPT_TCP_KEEPALIVE => 1,
-            CURLOPT_FRESH_CONNECT => true,
-            CURLOPT_FORBID_REUSE => true,
             CURLOPT_NOSIGNAL => true,
-            CURLOPT_SSL_VERIFYPEER => $this->settings->bool('upstream.verify_tls', true),
-            CURLOPT_SSL_VERIFYHOST => $this->settings->bool('upstream.verify_tls', true) ? 2 : 0,
             CURLOPT_HEADERFUNCTION => static function ($curl, string $line) use (&$status, &$responseHeaders): int {
                 $length = strlen($line);
                 if (preg_match('#^HTTP/\S+\s+(\d{3})#i', $line, $m)) {
@@ -143,27 +165,38 @@ final class OpenCodeClient
             },
         ]);
 
-        // Bind the local endpoint. CURLOPT_INTERFACE accepts an IP address and
-        // applies bind(2) before connect(2). The opensocket method is offered
-        // for kernels where the interface route needs an explicit socket.
-        $bindMethod = $this->settings->string('ipv6.bind_method', 'interface');
-        if ($bindMethod === 'opensocket' && defined('CURLOPT_OPENSOCKETFUNCTION') && function_exists('socket_create')) {
-            curl_setopt($ch, CURLOPT_OPENSOCKETFUNCTION, static function ($address, $socket) use ($sourceIp, &$bindError) {
-                $sock = @socket_create(AF_INET6, SOCK_STREAM, SOL_TCP);
-                if ($sock === false) {
-                    $bindError = 'socket_create failed';
-                    return false;
-                }
-                @socket_set_option($sock, SOL_SOCKET, SO_REUSEADDR, 1);
-                if (!@socket_bind($sock, $sourceIp, 0)) {
-                    $bindError = socket_strerror(socket_last_error($sock));
-                    @socket_close($sock);
-                    return false;
-                }
-                return $sock;
-            });
+        if ($bridge !== '') {
+            // 桥接运行在本机回环，不做 IPv6 绑定。
+            curl_setopt($ch, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
+            curl_setopt($ch, CURLOPT_FRESH_CONNECT, true);
         } else {
-            curl_setopt($ch, CURLOPT_INTERFACE, $sourceIp);
+            curl_setopt($ch, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V6);
+            curl_setopt($ch, CURLOPT_FRESH_CONNECT, true);
+            curl_setopt($ch, CURLOPT_FORBID_REUSE, true);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, $this->settings->bool('upstream.verify_tls', true));
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, $this->settings->bool('upstream.verify_tls', true) ? 2 : 0);
+
+            // Bind the local endpoint. CURLOPT_INTERFACE accepts an IP address
+            // and applies bind(2) before connect(2).
+            $bindMethod = $this->settings->string('ipv6.bind_method', 'interface');
+            if ($bindMethod === 'opensocket' && defined('CURLOPT_OPENSOCKETFUNCTION') && function_exists('socket_create')) {
+                curl_setopt($ch, CURLOPT_OPENSOCKETFUNCTION, static function ($address, $socket) use ($sourceIp, &$bindError) {
+                    $sock = @socket_create(AF_INET6, SOCK_STREAM, SOL_TCP);
+                    if ($sock === false) {
+                        $bindError = 'socket_create failed';
+                        return false;
+                    }
+                    @socket_set_option($sock, SOL_SOCKET, SO_REUSEADDR, 1);
+                    if (!@socket_bind($sock, $sourceIp, 0)) {
+                        $bindError = socket_strerror(socket_last_error($sock));
+                        @socket_close($sock);
+                        return false;
+                    }
+                    return $sock;
+                });
+            } else {
+                curl_setopt($ch, CURLOPT_INTERFACE, $sourceIp);
+            }
         }
 
         $payloadHook = Hook::filter('relay.upstream.request', [
@@ -171,16 +204,11 @@ final class OpenCodeClient
             'headers' => $headers,
             'body' => $payload,
             'source_ip' => $sourceIp,
-            'stream' => $stream,
+            'stream' => $upstreamStream,
         ]);
-        if (isset($payloadHook['url']) && is_string($payloadHook['url']) && $payloadHook['url'] !== $url) {
-            // Plugins may route to an allowed mirror. Still force IPv6 below.
-            $url = $payloadHook['url'];
-            curl_setopt($ch, CURLOPT_URL, $url);
-        }
-        if (isset($payloadHook['body']) && is_array($payloadHook['body'])) {
-            $encoded = (string) json_encode($payloadHook['body'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-            curl_setopt($ch, CURLOPT_POSTFIELDS, $encoded);
+        if (isset($payloadHook['body']) && is_array($payloadHook['body']) && $bridge === '') {
+            $encodedHook = (string) json_encode($payloadHook['body'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $encodedHook);
         }
 
         $ok = curl_exec($ch);
@@ -196,11 +224,20 @@ final class OpenCodeClient
         $firstByteMs = $firstByteAt !== null ? (int) round(($firstByteAt - $start) * 1000) : 0;
 
         if ($ok === false || $curlErrno !== 0 || $bindError !== null) {
-            [$code, $message, $retryable] = $this->mapCurlError($curlErrno, $curlError, $bindError);
+            [$code, $message] = $this->mapCurlError($curlErrno, $curlError, $bindError);
             return new UpstreamResult(0, $responseHeaders, $responseBody, $latencyMs, $firstByteMs, $bytes, $sourceIp, $code, $message, $curlErrno);
         }
         if ($status === 0) {
             return new UpstreamResult(0, $responseHeaders, $responseBody, $latencyMs, $firstByteMs, $bytes, $sourceIp, 'upstream_no_status', 'Upstream returned no HTTP status.');
+        }
+
+        if (!$stream && $kind === 'chat' && $status >= 200 && $status < 300) {
+            $responseBody = SseAggregator::toChatCompletion(
+                $responseBody,
+                (string) ($model['id'] ?? ''),
+                'chatcmpl-' . bin2hex(random_bytes(8)),
+            );
+            $responseHeaders['content-type'] = 'application/json; charset=utf-8';
         }
 
         return new UpstreamResult($status, $responseHeaders, $responseBody, $latencyMs, $firstByteMs, $bytes, $sourceIp);
@@ -256,6 +293,11 @@ final class OpenCodeClient
         return $url;
     }
 
+    private function bridgeUrl(): string
+    {
+        return trim($this->settings->string('upstream.bridge_url', ''));
+    }
+
     /** @return array<string,string> */
     private function headers(RelayIdentity $identity, bool $stream): array
     {
@@ -264,9 +306,8 @@ final class OpenCodeClient
             'Accept' => $stream ? 'text/event-stream' : 'application/json',
             'Accept-Encoding' => 'identity',
         ];
-        // Free models require no API key. The official client may send the
-        // literal "public" internally, but the endpoint accepts no auth at
-        // all. Only add the header when an operator explicitly configured one.
+        // Free models require no API key. The official client sends the literal
+        // "public" internally; keep it for parity when configured.
         $upstreamKey = trim($this->settings->string('upstream.key', ''));
         if ($upstreamKey !== '') {
             $headers['Authorization'] = 'Bearer ' . $upstreamKey;
@@ -287,7 +328,12 @@ final class OpenCodeClient
         $kind = (string) ($model['upstream_kind'] ?? 'chat');
 
         if ($kind === 'chat') {
-            if ($stream && $this->settings->bool('upstream.stream_include_usage', true)) {
+            if ($this->settings->bool('upstream.shape_requests', true)) {
+                $body = $this->shaper->shape($body);
+            }
+            // 免费通道拒绝 stream:false，统一强制流式，非流式由调用方重组。
+            $body['stream'] = true;
+            if ($this->settings->bool('upstream.stream_include_usage', true)) {
                 $options = $body['stream_options'] ?? [];
                 if (!is_array($options)) {
                     $options = [];
@@ -295,28 +341,27 @@ final class OpenCodeClient
                 $options['include_usage'] = true;
                 $body['stream_options'] = $options;
             }
-            if ($this->settings->bool('upstream.prompt_cache_key', true) && !isset($body['prompt_cache_key'])) {
+            if ($this->settings->bool('upstream.prompt_cache_key', false) && !isset($body['prompt_cache_key'])) {
                 $body['prompt_cache_key'] = $identity->promptCacheKey;
             }
         }
 
-        // A transparent relay must never touch the system prompt or messages.
         return Hook::filter('relay.upstream.body', $body, $model);
     }
 
-    /** @return array{0:string,1:string,2:bool} */
+    /** @return array{0:string,1:string} */
     private function mapCurlError(int $errno, string $error, ?string $bindError): array
     {
         if ($bindError !== null && $bindError !== '') {
-            return ['ipv6_bind_failed', 'Could not bind the allocated IPv6 source address: ' . $bindError, true];
+            return ['ipv6_bind_failed', 'Could not bind the allocated IPv6 source address: ' . $bindError];
         }
         return match ($errno) {
-            CURLE_COULDNT_RESOLVE_HOST => ['ipv6_dns_failed', 'Upstream IPv6 DNS resolution failed. IPv4 fallback is disabled.', true],
-            CURLE_COULDNT_CONNECT => ['ipv6_connect_failed', 'Could not connect to the upstream over IPv6: ' . $error, true],
-            CURLE_OPERATION_TIMEDOUT => ['upstream_timeout', 'Upstream timed out: ' . $error, true],
-            CURLE_INTERFACE_FAILED => ['ipv6_bind_failed', 'Could not bind the allocated IPv6 source address: ' . $error, true],
-            CURLE_SSL_CONNECT_ERROR, CURLE_SSL_CERTPROBLEM, CURLE_SSL_CIPHER, CURLE_PEER_FAILED_VERIFICATION => ['tls_error', 'TLS error: ' . $error, true],
-            default => ['upstream_transport_error', 'Upstream transport error (' . $errno . '): ' . $error, true],
+            CURLE_COULDNT_RESOLVE_HOST => ['ipv6_dns_failed', 'Upstream IPv6 DNS resolution failed. IPv4 fallback is disabled.'],
+            CURLE_COULDNT_CONNECT => ['ipv6_connect_failed', 'Could not connect to the upstream over IPv6: ' . $error],
+            CURLE_OPERATION_TIMEDOUT => ['upstream_timeout', 'Upstream timed out: ' . $error],
+            CURLE_INTERFACE_FAILED => ['ipv6_bind_failed', 'Could not bind the allocated IPv6 source address: ' . $error],
+            CURLE_SSL_CONNECT_ERROR, CURLE_SSL_CERTPROBLEM, CURLE_SSL_CIPHER, CURLE_PEER_FAILED_VERIFICATION => ['tls_error', 'TLS error: ' . $error],
+            default => ['upstream_transport_error', 'Upstream transport error (' . $errno . '): ' . $error],
         };
     }
 }

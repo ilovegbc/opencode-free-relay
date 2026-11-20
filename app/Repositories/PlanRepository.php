@@ -38,21 +38,19 @@ final class PlanRepository
     public function create(array $data): array
     {
         $row = $this->db->fetch(
-            'INSERT INTO plans (code, name, description, price_credits, daily_requests, daily_tokens, rpm, concurrency,
-                                allowed_models, discount_multiplier, is_default, active, sort_order)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            'INSERT INTO plans (code, name, description, daily_requests, daily_tokens, rpm, concurrency,
+                                allowed_models, is_default, active, sort_order)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              RETURNING *',
             [
                 $data['code'],
                 $data['name'],
                 $data['description'] ?? '',
-                $data['price_credits'] ?? 0,
                 $data['daily_requests'] ?? 200,
                 $data['daily_tokens'] ?? 5000000,
                 $data['rpm'] ?? 30,
                 $data['concurrency'] ?? 3,
                 $this->pgTextArray($data['allowed_models'] ?? null),
-                $data['discount_multiplier'] ?? 1,
                 !empty($data['is_default']) ? 'true' : 'false',
                 !empty($data['active']) ? 'true' : 'false',
                 $data['sort_order'] ?? 0,
@@ -69,7 +67,7 @@ final class PlanRepository
 
     public function update(int $id, array $data): void
     {
-        $allowed = ['code', 'name', 'description', 'price_credits', 'daily_requests', 'daily_tokens', 'rpm', 'concurrency', 'discount_multiplier', 'is_default', 'active', 'sort_order'];
+        $allowed = ['code', 'name', 'description', 'daily_requests', 'daily_tokens', 'rpm', 'concurrency', 'is_default', 'active', 'sort_order'];
         $sets = [];
         $params = [];
         foreach ($allowed as $field) {
@@ -103,6 +101,11 @@ final class PlanRepository
     public function userCount(int $planId): int
     {
         return (int) $this->db->scalar('SELECT count(*) FROM users WHERE plan_id = ?', [$planId]);
+    }
+
+    public function delete(int $id): int
+    {
+        return $this->db->execute('DELETE FROM plans WHERE id = ?', [$id]);
     }
 
     private function pgTextArray(?array $values): ?string

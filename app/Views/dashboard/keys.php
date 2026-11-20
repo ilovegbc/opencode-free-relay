@@ -36,18 +36,16 @@
                                 <?php if ($key['status'] === 'active' && (empty($key['expires_at']) || strtotime((string) $key['expires_at']) > time())): ?>
                                     <span class="badge green">active</span>
                                 <?php else: ?>
-                                    <span class="badge red"><?= e($key['status']) ?></span>
+                                    <span class="badge red">已过期</span>
                                 <?php endif; ?>
                             </td>
                             <td class="small"><?= e(time_ago($key['last_used_at'])) ?></td>
                             <td class="small"><?= e(format_number((int) $key['request_count'])) ?></td>
                             <td>
-                                <?php if ($key['status'] === 'active'): ?>
-                                    <form method="post" action="<?= e(url('/dashboard/keys/' . $key['id'] . '/revoke')) ?>" data-confirm="确定吊销这个 Key？" class="inline-form">
-                                        <?= csrf_field() ?>
-                                        <button class="button danger small" type="submit">吊销</button>
-                                    </form>
-                                <?php endif; ?>
+                                <form method="post" action="<?= e(url('/dashboard/keys/' . $key['id'] . '/delete')) ?>" data-confirm="删除后该 Key 立即失效且不可恢复，确定删除？" class="inline-form">
+                                    <?= csrf_field() ?>
+                                    <button class="button danger small" type="submit">删除</button>
+                                </form>
                             </td>
                         </tr>
                     <?php endforeach; ?>
@@ -71,6 +69,6 @@
             </div>
             <button class="button" type="submit" style="width:100%">生成 Key</button>
         </form>
-        <p class="help" style="margin-top:1rem">建议为每个客户端单独创建 Key，便于审计和单独吊销。若 Key 泄露，立即吊销。</p>
+        <p class="help" style="margin-top:1rem">建议为每个客户端单独创建 Key；不再使用或疑似泄露时直接删除，删除后立即失效。</p>
     </aside>
 </div>

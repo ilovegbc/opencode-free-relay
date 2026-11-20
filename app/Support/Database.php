@@ -72,7 +72,7 @@ final class Database
     public function fetch(string $sql, array $params = []): ?array
     {
         $stmt = $this->pdo()->prepare($sql);
-        $stmt->execute($params);
+        $stmt->execute($this->normalizeParams($params));
         $row = $stmt->fetch();
         return $row === false ? null : $row;
     }
@@ -81,22 +81,40 @@ final class Database
     public function fetchAll(string $sql, array $params = []): array
     {
         $stmt = $this->pdo()->prepare($sql);
-        $stmt->execute($params);
+        $stmt->execute($this->normalizeParams($params));
         return $stmt->fetchAll();
     }
 
     public function execute(string $sql, array $params = []): int
     {
         $stmt = $this->pdo()->prepare($sql);
-        $stmt->execute($params);
+        $stmt->execute($this->normalizeParams($params));
         return $stmt->rowCount();
     }
 
     public function scalar(string $sql, array $params = []): mixed
     {
         $stmt = $this->pdo()->prepare($sql);
-        $stmt->execute($params);
+        $stmt->execute($this->normalizeParams($params));
         return $stmt->fetchColumn();
+    }
+
+    /**
+     * PDO 会把 PHP 的 false 绑成空串，PostgreSQL 的 boolean 列会直接报
+     * "invalid input syntax for type boolean: """（登录失败写审计表时必然触发）。
+     * 统一在这里转成 'true'/'false'。
+     *
+     * @param array<int|string,mixed> $params
+     * @return array<int|string,mixed>
+     */
+    private function normalizeParams(array $params): array
+    {
+        foreach ($params as $key => $value) {
+            if (is_bool($value)) {
+                $params[$key] = $value ? 'true' : 'false';
+            }
+        }
+        return $params;
     }
 
     /**

@@ -59,6 +59,30 @@ final class PlanController extends Controller
         Response::redirect('/admin/plans');
     }
 
+    public function destroy(Request $request, array $params): never
+    {
+        Auth::requireAdmin();
+        $this->validateCsrf($request);
+        $id = (int) ($params['id'] ?? 0);
+        $repo = new PlanRepository(App::db());
+        $plan = $repo->find($id);
+        if ($plan === null) {
+            throw new HttpException(404, 'Plan not found.', 'plan_not_found');
+        }
+        if (!empty($plan['is_default'])) {
+            flash('error', '默认套餐不能删除，请先把其他套餐设为默认。');
+            Response::redirect('/admin/plans');
+        }
+        if ($repo->userCount($id) > 0) {
+            flash('error', '该套餐仍有用户在使用，无法删除。');
+            Response::redirect('/admin/plans');
+        }
+        $repo->delete($id);
+        $this->audit('plan.delete', 'plan', (string) $id, ['code' => $plan['code']]);
+        flash('success', '套餐已删除。');
+        Response::redirect('/admin/plans');
+    }
+
     /** @return array<string,mixed> */
     private function payload(Request $request): array
     {
@@ -75,12 +99,10 @@ final class PlanController extends Controller
             'code' => $code,
             'name' => $name,
             'description' => (string) $request->post('description', ''),
-            'price_credits' => max(0, (float) $request->post('price_credits', 0)),
             'daily_requests' => (int) $request->post('daily_requests', 200),
             'daily_tokens' => (int) $request->post('daily_tokens', 5000000),
             'rpm' => max(0, (int) $request->post('rpm', 30)),
             'concurrency' => max(1, (int) $request->post('concurrency', 3)),
-            'discount_multiplier' => max(0.0001, (float) $request->post('discount_multiplier', 1)),
             'allowed_models' => $allowed === '' ? null : array_values(array_filter(array_map('trim', explode(',', $allowed)))),
             'is_default' => (string) $request->post('is_default', '0') === '1',
             'active' => (string) $request->post('active', '1') === '1',

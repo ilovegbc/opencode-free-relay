@@ -76,7 +76,6 @@ final class UserController extends Controller
             'role' => $role,
             'status' => $status,
             'plan_id' => $plan['id'],
-            'balance' => (float) $request->post('balance', 0),
         ]);
         $this->audit('user.create', 'user', (string) $user['id'], ['username' => $username, 'role' => $role]);
         flash('success', 'User created.');
@@ -99,7 +98,6 @@ final class UserController extends Controller
             'plans' => (new PlanRepository(App::db()))->all(),
             'keys' => (new ApiKeyRepository(App::db()))->forUser($id),
             'logs' => $logs->usageForUser($id, 30),
-            'credits' => App::db()->fetchAll('SELECT * FROM credit_transactions WHERE user_id = ? ORDER BY id DESC LIMIT 30', [$id]),
             'newKey' => Session::pull('admin_new_key'),
         ], 'layouts/admin');
     }
@@ -155,19 +153,31 @@ final class UserController extends Controller
         Response::redirect('/admin/users/' . $id);
     }
 
-    public function balance(Request $request, array $params): never
+    public function destroy(Request $request, array $params): never
     {
         $admin = Auth::requireAdmin();
         $this->validateCsrf($request);
         $id = (int) ($params['id'] ?? 0);
-        $delta = (float) $request->post('delta', 0);
-        if (abs($delta) < 0.000001) {
-            throw new ValidationException('Enter a non-zero amount.');
+        $repo = new UserRepository(App::db());
+        $user = $repo->find($id);
+        if ($user === null) {
+            throw new HttpException(404, 'User not found.', 'user_not_found');
         }
-        (new UserRepository(App::db()))->adjustBalance($id, $delta, 'admin', (string) $request->post('note', ''), (int) $admin['id']);
-        $this->audit('user.balance', 'user', (string) $id, ['delta' => $delta]);
-        flash('success', 'Balance adjusted.');
-        Response::redirect('/admin/users/' . $id);
+        if ((int) $admin['id'] === $id) {
+            flash('error', '不能删除当前登录的管理员账户。');
+            Response::redirect('/admin/users/' . $id);
+        }
+        if (($user['role'] ?? 'user') === 'admin' && $repo->countAdmins() <= 1) {
+            flash('error', '这是最后一个管理员账户，无法删除。');
+            Response::redirect('/admin/users/' . $id);
+        }
+        $repo->delete($id);
+        $this->audit('user.delete', 'user', (string) $id, [
+            'username' => $user['username'],
+            'email' => $user['email'],
+        ]);
+        flash('success', '用户 ' . $user['username'] . ' 已删除。');
+        Response::redirect('/admin/users');
     }
 
     public function createKey(Request $request, array $params): never
@@ -185,15 +195,15 @@ final class UserController extends Controller
         Response::redirect('/admin/users/' . $id);
     }
 
-    public function revokeKey(Request $request, array $params): never
+    public function deleteKey(Request $request, array $params): never
     {
         Auth::requireAdmin();
         $this->validateCsrf($request);
         $id = (int) ($params['id'] ?? 0);
         $userId = (int) ($params['userId'] ?? 0);
-        (new ApiKeyRepository(App::db()))->revokeAsAdmin($id);
-        $this->audit('api_key.revoke_admin', 'api_key', (string) $id);
-        flash('success', 'Key revoked.');
+        (new ApiKeyRepository(App::db()))->deleteAsAdmin($id);
+        $this->audit('api_key.delete_admin', 'api_key', (string) $id);
+        flash('success', 'Key 已删除。');
         Response::redirect('/admin/users/' . $userId);
     }
 }

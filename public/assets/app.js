@@ -34,14 +34,44 @@
     syncThemeUI();
 
     // --- Mobile nav --------------------------------------------------------
+    var navPanel = document.querySelector('[data-nav]');
+    function setNav(open) {
+        if (!navPanel) {
+            return;
+        }
+        navPanel.classList.toggle('open', open);
+        $$('[data-nav-toggle]').forEach(function (button) {
+            button.setAttribute('aria-expanded', open ? 'true' : 'false');
+        });
+    }
     $$('[data-nav-toggle]').forEach(function (button) {
-        button.addEventListener('click', function () {
-            var nav = document.querySelector('[data-nav]');
-            if (nav) {
-                nav.classList.toggle('open');
-            }
+        button.setAttribute('aria-expanded', 'false');
+        button.addEventListener('click', function (event) {
+            event.stopPropagation();
+            setNav(!(navPanel && navPanel.classList.contains('open')));
         });
     });
+    if (navPanel) {
+        navPanel.addEventListener('click', function (event) {
+            if (event.target.closest('a, button')) {
+                setNav(false);
+            }
+        });
+        document.addEventListener('click', function (event) {
+            if (!navPanel.classList.contains('open')) {
+                return;
+            }
+            if (navPanel.contains(event.target) || event.target.closest('[data-nav-toggle]')) {
+                return;
+            }
+            setNav(false);
+        });
+        document.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape') {
+                setNav(false);
+            }
+        });
+    }
 
     // --- Toasts ------------------------------------------------------------
     var toastBox = $('#toasts');

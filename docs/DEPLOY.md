@@ -31,6 +31,22 @@ php bin/create-admin.php admin admin@example.com 'change-me-please'
 chown -R www-data:www-data storage
 ```
 
+### 2.1 上游准入资源（请求塑形）
+
+仓库已附带 `resources/opencode/build-system.txt` 与 `tools.json`（来自官方 1.19.6 构建，MIT，见 `resources/opencode/NOTICE.md`）。默认直接使用；若要放到 Web 根目录之外：
+
+```bash
+sudo install -d -o www-data -g www-data /var/lib/opencode-relay/shape
+# 将两个文件复制到 /var/lib/opencode-relay/shape/
+```
+
+```dotenv
+OPENCODE_SHAPE_REQUESTS=true
+OPENCODE_SHAPE_DIR=/var/lib/opencode-relay/shape
+```
+
+升级官方客户端后前缀可能变化，需要替换文件并重启 PHP-FPM。缺少文件时塑形会静默跳过，上游通常仍会返回 `429 FreeUsageLimitError`。不需要塑形时设为 `false`。详见 [`resources/opencode/README.md`](../resources/opencode/README.md)。
+
 ## 3. IPv6 段接入
 
 ### 3.1 运营商把整段路由到本机
@@ -126,7 +142,66 @@ php bin/doctor.php --probe
 - 目标无 AAAA：`opencode.ai` 必须能通过 IPv6 访问；本项目不会回退 IPv4。
 - `No enabled IPv6 pool`：后台添加池并启用。
 
-## 6. Nginx + PHP-FPM
+## 6. Bun 上游桥接（推荐）
+
+站点 PHP 的 libcurl 往往过不了上游传输层准入（即使请求体完全合法）。桥接用 Bun 的 TLS/HTTP2 栈代发：
+
+```bash
+sudo apt install -y unzip
+curl -fsSL https://bun.sh/install | bash
+sudo install -m 0755 /root/.bun/bin/bun /usr/local/bin/bun
+sudo install -d -o www-data -g www-data /opt/opencode-relay-bridge
+sudo install -m 0644 /var/www/opencode-relay/bin/opencode-bridge.ts /opt/opencode-relay-bridge/
+```
+
+`/etc/systemd/system/opencode-relay-bridge.service`（也可直接复制 [`deploy/opencode-relay-bridge.service`](../deploy/opencode-relay-bridge.service)）：
+
+```ini
+[Unit]
+Description=OpenCode Relay upstream bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/opencode-relay-bridge
+Environment=HOME=/var/www
+Environment=BRIDGE_HOST=127.0.0.1
+Environment=BRIDGE_PORT=18130
+Environment=BRIDGE_TOKEN=replace-with-a-random-token
+Environment=BRIDGE_ALLOWED_HOSTS=opencode.ai
+ExecStart=/usr/local/bin/bun /opt/opencode-relay-bridge/opencode-bridge.ts
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now opencode-relay-bridge
+curl -s http://127.0.0.1:18130/health
+```
+
+`.env`：
+
+```dotenv
+OPENCODE_BRIDGE_URL=http://127.0.0.1:18130
+OPENCODE_BRIDGE_TOKEN=replace-with-a-random-token
+```
+
+`BRIDGE_TOKEN` 与 `OPENCODE_BRIDGE_TOKEN` 必须一致。
+
+> 桥接模式仍要求至少一个启用的 IPv6 池（健康检查与租约记录），但上游出口是桥接主机的默认出口，**不是**租约地址。需要“每请求不同 IPv6”时使用直连模式，或在不同的 IPv6 出口主机上各部署一个桥接。
+
+## 7. Nginx + PHP-FPM
 
 ```nginx
 server {
@@ -166,6 +241,8 @@ server {
 
 `fastcgi_buffering off;` 对流式响应非常重要。也可以在应用层通过 `X-Accel-Buffering: no` 关闭，但建议双保险。
 
+> 不要保留 `error_page 404 /404.html;`。它会把应用返回的 JSON 404 替换成 HTML，客户端会报 `Unexpected JSON token ... <!DOCTYPE html>`。面板修改 PHP 版本或伪静态后要复查。
+
 PHP-FPM 建议：
 
 ```ini
@@ -181,7 +258,7 @@ memory_limit = 256M
 sudo systemctl reload php8.3-fpm nginx
 ```
 
-## 7. 定时任务
+## 8. 定时任务
 
 ```cron
 0 * * * * www-data php /var/www/opencode-relay/bin/cron.php models >> /var/log/opencode-relay-cron.log 2>&1
@@ -222,17 +299,20 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now opencode-relay-models.timer
 ```
 
-## 8. 首次检查清单
+## 9. 首次检查清单
 
 - [ ] `php bin/doctor.php` 全部关键项 PASS
 - [ ] `php bin/doctor.php --probe` 每个池都能绑定
+- [ ] `resources/opencode`（或 `OPENCODE_SHAPE_DIR`）里两个塑形文件可读
+- [ ] 桥接 `/health` 返回 200，`OPENCODE_BRIDGE_TOKEN` 与 `BRIDGE_TOKEN` 一致
 - [ ] 后台模型目录有免费模型，最近同步不超过 2 小时
 - [ ] 创建普通用户与 Key，调用 `/v1/chat/completions` 成功
-- [ ] 失败时状态页显示 `503 ipv6_*`，而不是偷偷走 IPv4
-- [ ] 日志中每个请求的出口 IPv6 不同
+- [ ] 非流式 chat 返回标准 JSON（SSE 已重组）
+- [ ] 失败时返回 `503 ipv6_*`，而不是偷偷走 IPv4
+- [ ] 直连模式下日志中每个请求的出口 IPv6 不同
 - [ ] 备份 PostgreSQL 与 `.env`
 
-## 9. 升级
+## 10. 升级
 
 ```bash
 cd /var/www/opencode-relay

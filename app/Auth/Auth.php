@@ -45,7 +45,7 @@ final class Auth
             return null;
         }
         if ($user['status'] !== 'active') {
-            throw new HttpException(403, 'This account is not active yet. Contact the administrator.', 'account_inactive');
+            throw new HttpException(403, 'This account is not active yet. If you just registered, verify your email first; otherwise contact the administrator.', 'account_inactive');
         }
         self::login($user, $ip);
         return self::user();

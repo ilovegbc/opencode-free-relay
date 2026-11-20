@@ -16,6 +16,7 @@ $tests = [
     'Relay\\Tests\\UsageParserTest',
     'Relay\\Tests\\RouterTest',
     'Relay\\Tests\\CryptoTest',
+    'Relay\\Tests\\ThinkingTest',
 ];
 
 $totalAssertions = 0;

@@ -22,6 +22,9 @@ server {
     # 不要把 .env / storage / database 暴露出去。
     location ~ /\.(?!well-known) { deny all; }
 
+    # 注意：不要配置 error_page 404 /404.html;
+    # 它会把应用返回的 JSON 404 替换成 HTML，客户端会解析失败。
+
     location / {
         try_files $uri $uri/ /index.php?$query_string;
     }

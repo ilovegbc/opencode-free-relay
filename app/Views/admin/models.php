@@ -1,9 +1,9 @@
-<?php $free = array_values(array_filter($models, static fn (array $m): bool => (bool) $m['is_free'])); ?>
+<?php $serving = count(array_filter($models, static fn (array $m): bool => (bool) $m['enabled'] && (bool) $m['available'])); ?>
 <div class="section-title">
     <div>
         <span class="eyebrow"><span class="dot"></span>Catalog</span>
         <h1 style="margin-top:.7rem">免费模型</h1>
-        <p class="muted" style="margin:0">每小时从 OpenCode 模型端点刷新。只有免费 chat 模型会出现在 API 中。</p>
+        <p class="muted" style="margin:0">每小时从 OpenCode 模型端点刷新，只保留零价或名称带 Free 的模型。</p>
     </div>
     <div class="button-row">
         <form method="post" action="<?= e(url('/admin/models/sync')) ?>" class="inline-form">
@@ -14,25 +14,25 @@
     </div>
 </div>
 
-<div class="grid grid-4">
-    <div class="kpi"><div class="label">Total rows</div><div class="value"><?= e((string) count($models)) ?></div><div class="hint">all upstream models</div></div>
-    <div class="kpi"><div class="label">Free</div><div class="value"><?= e((string) count($free)) ?></div><div class="hint">is_free</div></div>
-    <div class="kpi"><div class="label">Serving</div><div class="value"><?= e((string) count(array_filter($free, static fn (array $m): bool => (bool) $m['enabled'] && (bool) $m['available']))) ?></div><div class="hint">enabled + available</div></div>
+<div class="grid grid-3">
+    <div class="kpi"><div class="label">免费模型</div><div class="value"><?= e((string) count($models)) ?></div><div class="hint">is_free</div></div>
+    <div class="kpi"><div class="label">Serving</div><div class="value"><?= e((string) $serving) ?></div><div class="hint">enabled + available</div></div>
     <div class="kpi"><div class="label">Last sync</div><div class="value" style="font-size:1rem"><?= e(!empty($lastSync['finished_at']) ? time_ago((string) $lastSync['finished_at']) : 'never') ?></div><div class="hint"><?= e($lastSync['status'] ?? 'never') ?></div></div>
 </div>
 
 <div class="card" style="margin-top:1rem">
-    <div class="card-header"><h2>模型目录</h2><span class="badge blue">cost=0 / name Free</span></div>
+    <div class="card-header"><h2>模型目录</h2><span class="badge blue">free only</span></div>
     <div class="table-wrap">
         <table>
-            <thead><tr><th>模型</th><th>类型</th><th>状态</th><th>上下文</th><th>上游</th><th>价格 / 积分</th><th>操作</th></tr></thead>
+            <thead><tr><th>模型</th><th>类型</th><th>状态</th><th>上下文</th><th>接入</th><th>操作</th></tr></thead>
             <tbody>
             <?php foreach ($models as $model): ?>
+                <?php $thinking = \Relay\Services\Thinking::forModel($model); ?>
                 <tr>
                     <td>
                         <strong><?= e($model['name']) ?></strong>
                         <div class="tiny mono"><?= e($model['id']) ?></div>
-                        <?php if (!$model['is_free']): ?><span class="badge">paid</span><?php endif; ?>
+                        <div class="tiny muted">思考：<?= e($thinking['levels'] !== [] ? implode(' / ', $thinking['levels']) : '—') ?></div>
                     </td>
                     <td class="small"><?= e($model['type']) ?></td>
                     <td>
@@ -41,18 +41,13 @@
                     </td>
                     <td class="small"><?= e($model['context_limit'] ? format_number((int) $model['context_limit']) : '—') ?><br><span class="muted">out <?= e($model['output_limit'] ? format_number((int) $model['output_limit']) : '—') ?></span></td>
                     <td class="small"><span class="badge blue"><?= e($model['upstream_kind']) ?></span><div class="tiny muted mono" style="max-width:260px;word-break:break-all"><?= e($model['upstream_base_url']) ?>/…</div></td>
-                    <td class="small">in <?= e($model['input_price']) ?> / out <?= e($model['output_price']) ?><br><span class="muted">relay <?= e($model['credit_per_request']) ?> + <?= e($model['credit_per_1k_input']) ?>/1k + <?= e($model['credit_per_1k_output']) ?>/1k × <?= e($model['credit_multiplier']) ?></span></td>
                     <td>
                         <details>
                             <summary class="small">编辑</summary>
-                            <form method="post" action="<?= e(url('/admin/models/' . rawurlencode((string) $model['id']))) ?>" style="margin-top:.6rem;min-width:280px">
+                            <form method="post" action="<?= e(url('/admin/models/' . rawurlencode((string) $model['id']))) ?>" style="margin-top:.6rem;width:100%;max-width:320px">
                                 <?= csrf_field() ?>
                                 <div class="checkbox form-row"><input id="m_enabled_<?= e(md5((string) $model['id'])) ?>" type="checkbox" name="enabled" value="1" <?= $model['enabled'] ? 'checked' : '' ?>><label for="m_enabled_<?= e(md5((string) $model['id'])) ?>">启用</label></div>
                                 <div class="form-grid">
-                                    <div class="form-row"><label>每请求积分</label><input name="credit_per_request" type="number" min="0" step="0.0001" value="<?= e($model['credit_per_request']) ?>"></div>
-                                    <div class="form-row"><label>倍率</label><input name="credit_multiplier" type="number" min="0.0001" step="0.0001" value="<?= e($model['credit_multiplier']) ?>"></div>
-                                    <div class="form-row"><label>输入 / 1k</label><input name="credit_per_1k_input" type="number" min="0" step="0.0001" value="<?= e($model['credit_per_1k_input']) ?>"></div>
-                                    <div class="form-row"><label>输出 / 1k</label><input name="credit_per_1k_output" type="number" min="0" step="0.0001" value="<?= e($model['credit_per_1k_output']) ?>"></div>
                                     <div class="form-row"><label>排序</label><input name="sort_order" type="number" value="<?= e((string) $model['sort_order']) ?>"></div>
                                 </div>
                                 <button class="button small" type="submit">保存</button>
@@ -61,7 +56,7 @@
                     </td>
                 </tr>
             <?php endforeach; ?>
-            <?php if (empty($models)): ?><tr><td colspan="7" class="muted">还没有模型。点击“立即同步”。</td></tr><?php endif; ?>
+            <?php if (empty($models)): ?><tr><td colspan="6" class="muted">还没有模型。点击“立即同步”。</td></tr><?php endif; ?>
             </tbody>
         </table>
     </div>

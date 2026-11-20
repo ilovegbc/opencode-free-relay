@@ -26,22 +26,76 @@ Authorization: Bearer sk-oc-...
 }
 ```
 
-流式响应会原样转发 `text/event-stream`；非流式响应为原始 JSON。
+流式请求会即时转发 `text/event-stream`；非流式 chat 请求在上游仍以流式发送，返回前由 `SseAggregator` 重组为标准 `chat.completion` JSON。
 
-中转完整保留 `system`、`messages`、`tools`、`tool_choice`、temperature 等字段。仅在缺失时补充 `prompt_cache_key`，并在开启时对 chat 流补充 `stream_options.include_usage`。
+### 请求塑形
+
+免费通道要求请求与官方客户端同形，因此 chat 请求会在转发前被改写：
+
+- `system` 变为“官方 agent 前缀 + 显式作废声明 + 调用方 system”；调用方消息本身不改；
+- `tools` 保留调用方定义，并确保存在官方 `read`（客户端没有时作为协议占位注入）；
+- 客户端完全没有工具时 `tool_choice` 置为 `none`，避免模型调用无人执行的占位工具；
+- `function.parameters` 会被规范化为合法 object schema；
+- `stream` 强制为 `true`，并补充 `stream_options.include_usage`；
+- 思考档位统一改写为顶层 `reasoning_effort`（见下节）。
+
+`upstream.shape_requests=false` 可关闭塑形；此时请求按调用方原样转发（仍会强制 chat 流式）。仓库已附带 `resources/opencode/build-system.txt` 与 `tools.json`（MIT，见 `NOTICE.md`）。
+
+### 思考等级（reasoning effort）
+
+`GET /v1/models` 的每个模型都带 `thinking`，由上游 `capabilities.reasoning` 同步：
+
+```json
+"thinking": {
+  "supported": true,
+  "toggle": true,
+  "efforts": ["low", "high", "max"],
+  "levels": ["none", "low", "high", "max"],
+  "default": null,
+  "budget": null
+}
+```
+
+- `efforts`：上游声明的档位（顺序保持上游原样）。
+- `levels`：客户端可选档位，`toggle` 为 true 时追加 `none`（关闭思考）。
+- `supported` 为 true 但没有 `levels` 的模型（如 `big-pickle`）不限制档位值，按客户端传来的值透传。
+
+客户端可以选择任一种写法，中转统一转成上游 chat-completions 的 `reasoning_effort`：
+
+```json
+{
+  "model": "deepseek-v4.1-flash-free",
+  "messages": [{"role": "user", "content": "你好"}],
+  "reasoning_effort": "high"
+}
+```
+
+```json
+{"model": "deepseek-v4.1-flash-free", "reasoning": {"effort": "high"}, "messages": []}
+{"model": "deepseek-v4.1-flash-free", "thinking": {"type": "enabled", "effort": "high"}, "messages": []}
+{"model": "deepseek-v4.1-flash-free", "thinking": {"type": "enabled", "budget_tokens": 8192}, "messages": []}
+```
+
+也可以把档位直接写进模型 ID：`deepseek-v4.1-flash-free:high`、`deepseek-v4.1-flash-free#max`。
+
+收敛规则：值不在 `levels` 里时取档位阶梯（`none < minimal < low < medium < high < xhigh < max`）上最近的支持档位，
+等距取更高档；`auto` / `default` 表示跟随上游默认。上游对未声明档位不报错而是静默不思考，所以这一步在中转侧完成。
+**客户端完全没有指定档位时，中转按该模型的最高档发送**（模型未声明 `effort` 列表时不做处理，交给上游默认）。
+Anthropic Messages 端点不改写 `thinking`，按客户端原样转发。
+
 
 ### 可选会话头
 
 外部客户端可以显式传入以下任一头，让提示词缓存亲和度更稳定：
 
 ```http
-X-Session-Id: ses_<64 hex>
-x-session-affinity: ses_<64 hex>
-x-opencode-session: ses_<64 hex>
+X-Session-Id: ses_<30 字符 canonical id>
+x-session-affinity: ses_<30 字符 canonical id>
+x-opencode-session: ses_<30 字符 canonical id>
 x-opencode-project: prj_...
 ```
 
-如果都没有，中转会根据 API Key + 首条用户消息 + system + 模型派生稳定的 `ses_<64 hex>`。多轮对话中首条用户消息不变，因此缓存键保持稳定。
+如果都没有，中转会根据 API Key + 首条用户消息 + 模型派生稳定的 canonical id。任意 `ses_...`、UUID、64 位 hex 都会被规范化为官方 30 字符布局：`ses_` + 12 位小写 hex + 14 位 base62，编码时间落在上游 ±30 天窗口内。多轮对话中首条用户消息不变，因此缓存键保持稳定；`prompt_cache_key` 取 canonical id 去掉 `ses_` 后的 26 个字符。
 
 ## Anthropic Messages
 
@@ -79,7 +133,16 @@ GET /v1/models
       "name": "Big Pickle",
       "context_length": 200000,
       "max_output_tokens": 32000,
-      "pricing": {"prompt": "0", "completion": "0", "request": "0"}
+      "pricing": {"prompt": "0", "completion": "0", "request": "0"},
+      "capabilities": {"tools": {"supported": true}, "reasoning": {"supported": true}},
+      "thinking": {
+        "supported": true,
+        "toggle": false,
+        "efforts": [],
+        "levels": [],
+        "default": null,
+        "budget": null
+      }
     }
   ]
 }
@@ -118,12 +181,12 @@ GET /health
 | 400 | `invalid_json`、`wrong_endpoint`、`validation_error` | 请求格式或端点不匹配 |
 | 401 | `invalid_api_key` | Key 缺失、吊销或过期 |
 | 403 | `model_forbidden`、`model_not_free`、`model_disabled` | 套餐/模型策略 |
-| 404 | `model_not_found` | 未知模型 |
+| 404 | `model_not_found`、`model_deprecated` | 未知模型，或上游已下架 |
 | 419 | `csrf_mismatch` | Web 表单会话过期 |
 | 422 | `validation_error` | 字段非法 |
-| 429 | `rate_limit`、`concurrency_limit`、`daily_request_limit`、`daily_token_limit`、`free_usage_limit` | 限流/额度/上游免费额度耗尽 |
-| 502 | `upstream_error` | 所有 IPv6 重试后仍失败 |
-| 503 | `ipv6_unavailable`、`ipv6_pool_exhausted` | 没有可用 IPv6 池/地址 |
+| 429 | `rate_limit`、`concurrency_limit`、`daily_request_limit`、`daily_token_limit`、`free_usage_limit` | 限流/额度/上游免费额度或形状拒绝 |
+| 502 | `upstream_error`、`upstream_client_error` | 上游或桥接失败 |
+| 503 | `ipv6_unavailable`、`ipv6_pool_exhausted`、`service_unavailable` | 没有可用 IPv6 池/地址，或服务暂不可用 |
 
 限流/额度响应会在有意义时带 `Retry-After`。
 

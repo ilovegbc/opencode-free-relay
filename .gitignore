@@ -9,3 +9,7 @@ Thumbs.db
 
 /tests/mock-upstream.log
 /tests/*.log
+
+# Local web-server overrides (panel-generated, contain absolute paths)
+/.user.ini
+/public/.user.ini

@@ -1,0 +1,28 @@
+# OpenCode Free Relay — Bun 上游桥接
+# 与 README「4.3 Bun 桥接」/ docs/DEPLOY.md「6. Bun 上游桥接」配套。
+# 先把 Bun 安装到 /usr/local/bin/bun，并把 opencode-bridge.ts 放到 /opt。
+[Unit]
+Description=OpenCode Relay upstream bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/opencode-relay-bridge
+Environment=HOME=/var/www
+Environment=BRIDGE_HOST=127.0.0.1
+Environment=BRIDGE_PORT=18130
+Environment=BRIDGE_TOKEN=replace-with-a-random-token
+Environment=BRIDGE_ALLOWED_HOSTS=opencode.ai
+ExecStart=/usr/local/bin/bun /opt/opencode-relay-bridge/opencode-bridge.ts
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

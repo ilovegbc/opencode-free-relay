@@ -45,7 +45,6 @@ final class ApiAuthenticator
             'role' => $row['role'],
             'status' => $row['user_status'],
             'plan_id' => $row['plan_id'],
-            'balance' => $row['balance'],
             'plan_code' => $row['plan_code'],
             'plan_name' => $row['plan_name'],
             'daily_requests' => $row['daily_requests'],
@@ -53,7 +52,6 @@ final class ApiAuthenticator
             'rpm' => $row['rpm'],
             'concurrency' => $row['concurrency'],
             'allowed_models' => pg_text_array($row['allowed_models']),
-            'discount_multiplier' => $row['discount_multiplier'],
         ];
         $key = [
             'id' => $row['id'],

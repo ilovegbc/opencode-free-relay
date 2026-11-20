@@ -21,4 +21,4 @@ Hook::on('relay.upstream.headers', function (array $headers): array {
 - `relay.upstream.headers`
 - `relay.upstream.body`
 
-注意：不要修改 `system` / `messages` / `tools`，否则会破坏项目“不修改提示词、与官方客户端一致”的承诺。插件拥有进程内完整权限，只安装你信任的插件。
+注意：`relay.upstream.body` 在请求塑形之后执行，`body` 中已经是“官方前缀 + 作废声明 + 调用方 system”以及补齐后的 `tools`。修改它会直接改变发给上游的请求；如果你要替换塑形策略，请优先关闭 `upstream.shape_requests` 并自行实现。插件拥有进程内完整权限，只安装你信任的插件。

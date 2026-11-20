@@ -52,14 +52,16 @@ final class ModelSyncService
                     continue;
                 }
                 $total++;
+                if (!ModelRepository::isFree($model) || ModelRepository::upstreamKind($model) === null) {
+                    continue;
+                }
                 $result = $this->models->upsertFromRemote($model, $autoEnable);
                 if ($result['changed']) {
                     $changed++;
                 }
-                if (ModelRepository::isFree($model) && ModelRepository::upstreamKind($model) !== null) {
-                    $freeIds[] = (string) $model['id'];
-                }
+                $freeIds[] = (string) $model['id'];
             }
+            $this->models->deleteNonFree();
 
             if ($freeIds === []) {
                 throw new \RuntimeException('The upstream returned zero usable free chat models; keeping the previous catalog.');
@@ -133,12 +135,10 @@ final class ModelSyncService
         $allocator = new IpAllocator($this->db, new IpPoolRepository($this->db), $this->settings);
         $lease = $allocator->allocate(uuid_v4());
 
-        $version = $this->settings->string('upstream.client_version', '2.3.0');
-        $channel = $this->settings->string('upstream.client_channel', 'latest');
         $client = $this->settings->string('upstream.client_name', 'cli');
         $ua = $this->settings->string('upstream.user_agent', '');
-        if ($ua === '') {
-            $ua = 'opencode/' . $channel . '/' . $version . '/' . $client;
+        if (trim($ua) === '') {
+            $ua = 'opencode/1.19.6 ai-sdk/provider-utils/4.0.23 runtime/bun/1.4.4';
         }
 
         $headers = [

@@ -14,12 +14,12 @@ use Relay\Repositories\ApiKeyRepository;
 use Relay\Repositories\IpPoolRepository;
 use Relay\Repositories\LogRepository;
 use Relay\Repositories\ModelRepository;
-use Relay\Services\BillingService;
 use Relay\Services\IdentityResolver;
 use Relay\Services\IpAllocator;
 use Relay\Services\OpenCodeClient;
 use Relay\Services\QuotaService;
 use Relay\Services\RelayService;
+use Relay\Services\Thinking;
 
 final class ChatController extends Controller
 {
@@ -49,7 +49,6 @@ final class ChatController extends Controller
                 'id' => (int) $user['id'],
                 'username' => $user['username'],
                 'plan' => $user['plan_code'],
-                'balance' => (float) $user['balance'],
             ],
             'key' => [
                 'id' => (int) $auth['key']['id'],
@@ -77,7 +76,14 @@ final class ChatController extends Controller
         if (!is_string($requestedModel) || trim($requestedModel) === '') {
             throw new ValidationException('The "model" field is required.', ['model' => 'Required']);
         }
-        $model = (new ModelRepository(App::db()))->resolve($requestedModel);
+        [$modelId, $suffixLevel] = Thinking::splitModelId($requestedModel);
+        $models = new ModelRepository(App::db());
+        $model = $models->resolve($modelId);
+        if ($model === null && $modelId !== trim($requestedModel)) {
+            // 后缀不是思考档位时按原样再解析一次，保持旧的模型/别名行为。
+            $model = $models->resolve(trim($requestedModel));
+            $suffixLevel = null;
+        }
         if ($model === null) {
             throw new HttpException(404, 'Unknown model: ' . $requestedModel, 'model_not_found');
         }
@@ -98,13 +104,20 @@ final class ChatController extends Controller
             throw new ValidationException('The request must contain messages or input.', ['messages' => 'Required']);
         }
 
+        $thinking = Thinking::forModel($model);
+        $requestedLevel = $suffixLevel ?? Thinking::requestedLevel($body);
+        // 客户端没指定档位时按该模型的最高档走；显式 auto/default 或模型未声明档位则交给上游默认。
+        $level = $requestedLevel === null
+            ? Thinking::highestLevel($thinking)
+            : Thinking::resolveLevel($thinking, $requestedLevel);
+        $body = Thinking::apply($body, $thinking, $kind, $level);
+
         $db = App::db();
         $settings = App::settings();
         $apiKeys = new ApiKeyRepository($db);
         $quota = new QuotaService($db, $settings, $apiKeys);
         $allocator = new IpAllocator($db, new IpPoolRepository($db), $settings);
         $client = new OpenCodeClient($settings);
-        $billing = new BillingService($settings);
         $logs = new LogRepository($db);
         $relay = new RelayService(
             $settings,
@@ -112,7 +125,6 @@ final class ChatController extends Controller
             $allocator,
             $client,
             $quota,
-            $billing,
             $logs,
         );
         $relay->handle($request, $user, $key, $model, $kind, $endpoint, $body);

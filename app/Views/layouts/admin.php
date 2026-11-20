@@ -27,7 +27,7 @@
         <a class="<?= ($activeNav ?? '') === 'pools' ? 'active' : '' ?>" href="<?= e(url('/admin/pools')) ?>">IPv6 池</a>
         <a class="<?= ($activeNav ?? '') === 'models' ? 'active' : '' ?>" href="<?= e(url('/admin/models')) ?>">免费模型</a>
         <a class="<?= ($activeNav ?? '') === 'plans' ? 'active' : '' ?>" href="<?= e(url('/admin/plans')) ?>">套餐</a>
-        <a class="<?= ($activeNav ?? '') === 'codes' ? 'active' : '' ?>" href="<?= e(url('/admin/codes')) ?>">邀请与兑换</a>
+        <a class="<?= ($activeNav ?? '') === 'codes' ? 'active' : '' ?>" href="<?= e(url('/admin/codes')) ?>">邀请码</a>
         <div class="sidebar-section">可观测</div>
         <a class="<?= ($activeNav ?? '') === 'logs' ? 'active' : '' ?>" href="<?= e(url('/admin/logs')) ?>">请求日志</a>
         <a class="<?= ($activeNav ?? '') === 'audit' ? 'active' : '' ?>" href="<?= e(url('/admin/audit')) ?>">审计日志</a>

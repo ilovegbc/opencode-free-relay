@@ -42,7 +42,6 @@ $planCodes = array_map(static fn (array $p): string => (string) $p['code'], $pla
             </div>
             <div class="checkbox form-row"><input id="require_approval" type="checkbox" name="site.require_approval" value="1" <?= $checked('site.require_approval') ?>><label for="require_approval">注册后需管理员审核</label></div>
             <div class="checkbox form-row"><input id="public_models" type="checkbox" name="site.public_model_list" value="1" <?= $checked('site.public_model_list') ?>><label for="public_models">允许未登录读取 /v1/models</label></div>
-            <div class="form-row"><label>注册赠送积分</label><input name="site.welcome_credits" type="number" min="0" step="0.0001" value="<?= e($val('site.welcome_credits', 0)) ?>"></div>
         </div>
 
         <div class="card">
@@ -99,18 +98,39 @@ $planCodes = array_map(static fn (array $p): string => (string) $p['code'], $pla
                 <div class="form-row"><label>单用户最大活跃 Key</label><input name="security.max_keys_per_user" type="number" min="1" value="<?= e($val('security.max_keys_per_user', 10)) ?>"></div>
                 <div class="form-row"><label>CORS Origin</label><input name="security.cors_origin" type="text" value="<?= e($val('security.cors_origin', '*')) ?>"><div class="help">* 或逗号分隔的 Origin。</div></div>
             </div>
-            <div class="form-grid">
-                <div class="form-row"><label>每次请求默认积分</label><input name="billing.credits_per_request_default" type="text" value="<?= e($val('billing.credits_per_request_default', 0)) ?>"></div>
-                <div class="form-row"><label>每 1K 输入积分</label><input name="billing.credits_per_1k_input_default" type="text" value="<?= e($val('billing.credits_per_1k_input_default', 0)) ?>"></div>
-                <div class="form-row"><label>每 1K 输出积分</label><input name="billing.credits_per_1k_output_default" type="text" value="<?= e($val('billing.credits_per_1k_output_default', 0)) ?>"></div>
-                <div class="form-row"><label>最低可用余额</label><input name="billing.min_balance_to_use" type="text" value="<?= e($val('billing.min_balance_to_use', 0)) ?>"></div>
-            </div>
             <div class="checkbox form-row"><input id="log_prompts" type="checkbox" name="logging.log_prompts" value="1" <?= $checked('logging.log_prompts') ?>><label for="log_prompts">记录提示词内容（默认关闭，隐私优先）</label></div>
             <div class="form-grid">
                 <div class="form-row"><label>日志保留（天）</label><input name="logging.log_retention_days" type="number" min="1" value="<?= e($val('logging.log_retention_days', 30)) ?>"></div>
                 <div class="form-row"><label>租约保留（天）</label><input name="logging.lease_retention_days" type="number" min="0" value="<?= e($val('logging.lease_retention_days', 7)) ?>"></div>
             </div>
             <div class="form-row"><label>页脚文案</label><input name="branding.footer" type="text" value="<?= e($val('branding.footer')) ?>"></div>
+        </div>
+
+        <div class="card">
+            <h2>邮件（SMTP）</h2>
+            <p class="muted small">启用后，注册必须填写真实邮箱并点击验证链接才能激活账号；
+                邮箱验证通过即自动激活，不再走管理员审批。未启用时不发邮件、注册直接成功。</p>
+            <div class="checkbox form-row">
+                <input id="mail_enabled" type="checkbox" name="mail.enabled" value="1" <?= $checked('mail.enabled') ?>>
+                <label for="mail_enabled">启用 SMTP 邮箱验证</label>
+            </div>
+            <div class="form-grid">
+                <div class="form-row"><label>SMTP 主机</label><input name="mail.host" type="text" value="<?= e($val('mail.host')) ?>" placeholder="smtp.example.com"></div>
+                <div class="form-row"><label>端口</label><input name="mail.port" type="number" min="1" max="65535" value="<?= e($val('mail.port', 587)) ?>"></div>
+                <div class="form-row"><label>加密</label>
+                    <select name="mail.encryption">
+                        <?php foreach (['tls' => 'STARTTLS (587)', 'ssl' => 'SSL (465)', 'none' => '无加密 (25)'] as $k => $label): ?>
+                            <option value="<?= e($k) ?>" <?= (string) $val('mail.encryption', 'tls') === $k ? 'selected' : '' ?>><?= e($label) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="form-row"><label>用户名（可选）</label><input name="mail.username" type="text" value="<?= e($val('mail.username')) ?>" autocomplete="off"></div>
+                <div class="form-row"><label>密码（留空不变）</label><input name="mail.password" type="password" value="" autocomplete="new-password"></div>
+                <div class="form-row"><label>发件地址</label><input name="mail.from_address" type="email" value="<?= e($val('mail.from_address')) ?>" placeholder="no-reply@example.com"></div>
+                <div class="form-row"><label>发件人名称</label><input name="mail.from_name" type="text" value="<?= e($val('mail.from_name')) ?>"></div>
+                <div class="form-row"><label>验证有效期（分钟）</label><input name="mail.verify_ttl_minutes" type="number" min="5" value="<?= e($val('mail.verify_ttl_minutes', 60)) ?>"></div>
+            </div>
+            <p class="help">当前状态：<strong><?= $checked('mail.enabled') && trim((string) $val('mail.host')) !== '' && trim((string) $val('mail.from_address')) !== '' ? '已配置，注册需要邮箱验证' : '未配置，注册不验证邮箱' ?></strong></p>
         </div>
     </div>
 

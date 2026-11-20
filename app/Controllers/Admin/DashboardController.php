@@ -46,6 +46,10 @@ final class DashboardController extends Controller
             $values = [];
             foreach ($types as $key => $type) {
                 $value = $request->post($key);
+                if ($key === 'mail.password' && (is_string($value) && trim($value) === '')) {
+                    // 留空表示不修改已保存的 SMTP 密码。
+                    continue;
+                }
                 if ($type === 'bool') {
                     $values[$key] = $value === '1' || $value === 'on' || $value === 'true';
                 } elseif ($type === 'int') {
@@ -65,6 +69,12 @@ final class DashboardController extends Controller
             }
             if (!in_array($values['ipv6.bind_method'] ?? 'interface', ['interface', 'opensocket'], true)) {
                 throw new ValidationException('IPv6 bind method must be interface or opensocket.');
+            }
+            if (!in_array($values['mail.encryption'] ?? 'tls', ['none', 'tls', 'ssl'], true)) {
+                throw new ValidationException('Mail encryption must be none, tls or ssl.');
+            }
+            if (($values['mail.enabled'] ?? false) && trim((string) ($values['mail.host'] ?? '')) === '') {
+                throw new ValidationException('Mail host is required when SMTP is enabled.');
             }
             App::settings()->setMany($values);
             $this->audit('settings.update', 'settings', 'global', ['keys' => array_keys($values)]);
@@ -205,7 +215,7 @@ final class DashboardController extends Controller
         return [
             'site.name' => 'string', 'site.tagline' => 'string', 'site.description' => 'string',
             'site.registration_mode' => 'string', 'site.require_approval' => 'bool', 'site.public_model_list' => 'bool',
-            'site.default_plan' => 'string', 'site.welcome_credits' => 'int',
+            'site.default_plan' => 'string',
             'upstream.base_url' => 'string', 'upstream.models_url' => 'string', 'upstream.key' => 'string',
             'upstream.client_name' => 'string', 'upstream.client_channel' => 'string', 'upstream.client_version' => 'string',
             'upstream.user_agent' => 'string', 'upstream.max_ip_retries' => 'int', 'upstream.connect_timeout' => 'int',
@@ -217,9 +227,10 @@ final class DashboardController extends Controller
             'ipv6.probe_url' => 'string', 'ipv6.bind_method' => 'string',
             'security.cors_origin' => 'string', 'security.login_max_attempts' => 'int', 'security.login_window_minutes' => 'int',
             'security.max_keys_per_user' => 'int',
-            'billing.credits_per_request_default' => 'string', 'billing.credits_per_1k_input_default' => 'string',
-            'billing.credits_per_1k_output_default' => 'string', 'billing.min_balance_to_use' => 'string',
             'logging.log_retention_days' => 'int', 'logging.lease_retention_days' => 'int', 'logging.log_prompts' => 'bool',
+            'mail.enabled' => 'bool', 'mail.host' => 'string', 'mail.port' => 'int', 'mail.encryption' => 'string',
+            'mail.username' => 'string', 'mail.password' => 'string', 'mail.from_address' => 'string',
+            'mail.from_name' => 'string', 'mail.verify_ttl_minutes' => 'int',
             'branding.footer' => 'string',
         ];
     }

@@ -35,7 +35,7 @@ return [
         'key' => Env::get('OPENCODE_UPSTREAM_KEY', 'public'),
         'client_name' => Env::get('OPENCODE_CLIENT_NAME', 'cli'),
         'client_channel' => Env::get('OPENCODE_CLIENT_CHANNEL', 'latest'),
-        'client_version' => Env::get('OPENCODE_CLIENT_VERSION', '2.3.0'),
+        'client_version' => Env::get('OPENCODE_CLIENT_VERSION', '1.19.6'),
         'user_agent' => Env::get('OPENCODE_USER_AGENT', ''),
         'max_ip_retries' => (int) Env::get('OPENCODE_MAX_IP_RETRIES', '2'),
         'connect_timeout' => (int) Env::get('OPENCODE_CONNECT_TIMEOUT', '15'),
@@ -44,8 +44,15 @@ return [
         'allow_http' => Env::bool('OPENCODE_ALLOW_HTTP', false),
         'verify_tls' => Env::bool('OPENCODE_VERIFY_TLS', true),
         'stream_include_usage' => Env::bool('OPENCODE_STREAM_INCLUDE_USAGE', true),
-        'prompt_cache_key' => Env::bool('OPENCODE_PROMPT_CACHE_KEY', true),
+        'prompt_cache_key' => Env::bool('OPENCODE_PROMPT_CACHE_KEY', false),
         'mirror_client_headers' => Env::bool('OPENCODE_MIRROR_CLIENT_HEADERS', true),
+        // 免费通道准入：请求必须与官方客户端同形（提示词前缀 + read 工具 + 流式）。
+        'shape_requests' => Env::bool('OPENCODE_SHAPE_REQUESTS', true),
+        'shape_resources_dir' => Env::get('OPENCODE_SHAPE_DIR', ''),
+        'project_id' => Env::get('OPENCODE_PROJECT_ID', 'global'),
+        // 站点 libcurl 无法通过上游传输层准入，默认走本机 Bun 桥接。
+        'bridge_url' => Env::get('OPENCODE_BRIDGE_URL', ''),
+        'bridge_token' => Env::get('OPENCODE_BRIDGE_TOKEN', ''),
     ],
     'ipv6' => [
         'required' => Env::bool('IPV6_REQUIRED', true),

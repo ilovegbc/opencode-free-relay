@@ -14,26 +14,14 @@ final class HealthController
 {
     public function index(Request $request): never
     {
-        $dbOk = App::db()->healthy();
-        $models = 0;
-        $pools = ['enabled_pools' => 0];
-        $lastSync = null;
+        $ok = false;
         try {
-            $models = (new ModelRepository(App::db()))->countFree();
-            $pools = (new IpPoolRepository(App::db()))->summary();
-            $lastSync = (new ModelRepository(App::db()))->lastSync();
+            $ok = App::db()->healthy()
+                && (new ModelRepository(App::db()))->countFree() > 0
+                && (int) (((new IpPoolRepository(App::db()))->summary()['enabled_pools'] ?? 0)) > 0;
         } catch (\Throwable) {
+            $ok = false;
         }
-        $ok = $dbOk && $models > 0 && (int) ($pools['enabled_pools'] ?? 0) > 0;
-        Response::json([
-            'status' => $ok ? 'ok' : 'degraded',
-            'database' => $dbOk,
-            'free_models' => $models,
-            'enabled_ipv6_pools' => (int) ($pools['enabled_pools'] ?? 0),
-            'last_model_sync' => $lastSync['finished_at'] ?? null,
-            'ipv6_only' => true,
-            'ipv4_fallback' => false,
-            'time' => gmdate('c'),
-        ], $ok ? 200 : 503);
+        Response::json(['status' => $ok ? 'ok' : 'degraded'], $ok ? 200 : 503);
     }
 }

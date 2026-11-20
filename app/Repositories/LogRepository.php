@@ -18,9 +18,9 @@ final class LogRepository
             'INSERT INTO request_logs
                 (request_id, user_id, api_key_id, model_id, endpoint, is_stream, status_code, upstream_status,
                  error_code, error_message, ip_pool_id, ip_address, attempt_count, input_tokens, output_tokens,
-                 total_tokens, cached_tokens, credits, latency_ms, first_byte_ms, client_ip, user_agent,
+                 total_tokens, cached_tokens, latency_ms, first_byte_ms, client_ip, user_agent,
                  prompt_cache_key, request_bytes, response_bytes)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::inet, ?, ?, ?, ?, ?, ?, ?, ?, ?::inet, ?, ?, ?, ?)',
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::inet, ?, ?, ?, ?, ?, ?, ?, ?::inet, ?, ?, ?, ?)',
             [
                 $log['request_id'],
                 $log['user_id'] ?? null,
@@ -39,7 +39,6 @@ final class LogRepository
                 $log['output_tokens'] ?? 0,
                 $log['total_tokens'] ?? 0,
                 $log['cached_tokens'] ?? 0,
-                $log['credits'] ?? 0,
                 $log['latency_ms'] ?? 0,
                 $log['first_byte_ms'] ?? 0,
                 $log['client_ip'] ?? null,
@@ -154,7 +153,7 @@ final class LogRepository
         $params[] = max(1, $days);
         return $this->db->fetchAll(
             'SELECT day, sum(requests) AS requests, sum(input_tokens) AS input_tokens,
-                    sum(output_tokens) AS output_tokens, sum(credits) AS credits
+                    sum(output_tokens) AS output_tokens
              FROM usage_daily
              WHERE day >= current_date - (?::int - 1) ' . $userWhere . '
              GROUP BY day ORDER BY day',

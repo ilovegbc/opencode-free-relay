@@ -15,6 +15,7 @@ use Relay\Repositories\CodeRepository;
 use Relay\Repositories\LogRepository;
 use Relay\Repositories\PlanRepository;
 use Relay\Repositories\UserRepository;
+use Relay\Services\Mailer;
 use Relay\Support\Crypto;
 use Relay\Support\Session;
 
@@ -90,7 +91,9 @@ final class AuthController extends Controller
         if (!preg_match('/^[A-Za-z0-9_.-]{3,32}$/', $username)) {
             $errors['username'] = 'Use 3–32 letters, numbers, dots, underscores or hyphens.';
         }
-        if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        if ($email === '') {
+            $errors['email'] = 'Email address is required.';
+        } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $errors['email'] = 'Enter a valid email address.';
         }
         if (strlen($password) < 8) {
@@ -116,7 +119,7 @@ final class AuthController extends Controller
             flash('error', 'That username is already taken.');
             Response::redirect('/register');
         }
-        if ($email !== '' && $users->findByLogin($email) !== null) {
+        if ($users->findByLogin($email) !== null) {
             flash('error', 'That email is already registered.');
             Response::redirect('/register');
         }
@@ -140,37 +143,54 @@ final class AuthController extends Controller
         }
 
         $requireApproval = (bool) setting('site.require_approval', false);
-        $welcome = (float) setting('site.welcome_credits', 0) + (float) ($invite['initial_credits'] ?? 0);
+        $mailer = new Mailer(App::settings());
+        $needsVerification = $mailer->isConfigured();
         $user = null;
         try {
-            $user = $db->transaction(function () use ($users, $invite, $inviteCode, $username, $email, $password, $plan, $welcome, $requireApproval): array {
+            $user = $db->transaction(function () use ($users, $invite, $inviteCode, $username, $email, $password, $plan, $requireApproval, $needsVerification): array {
                 if ($invite !== null) {
                     $consumed = (new CodeRepository(App::db()))->consumeInvite($inviteCode);
                     if ($consumed === null) {
                         throw new HttpException(422, 'That invite code is no longer valid.', 'invalid_invite');
                     }
                 }
-                $created = $users->create([
+                return $users->create([
                     'username' => $username,
-                    'email' => $email !== '' ? $email : null,
+                    'email' => $email,
                     'password_hash' => Crypto::passwordHash($password),
                     'role' => 'user',
-                    'status' => $requireApproval ? 'pending' : 'active',
+                    'status' => ($needsVerification || $requireApproval) ? 'pending' : 'active',
                     'plan_id' => $plan['id'],
-                    'balance' => $welcome,
+                    'metadata' => ['email_verified' => !$needsVerification],
                 ]);
-                if ($welcome > 0) {
-                    App::db()->execute(
-                        'INSERT INTO credit_transactions (user_id, amount, balance_after, kind, note)
-                         VALUES (?, ?, ?, \'signup\', ?)',
-                        [$created['id'], $welcome, $welcome, 'Welcome credit']
-                    );
-                }
-                return $created;
             });
         } catch (HttpException $e) {
             flash('error', $e->getMessage());
             Response::redirect('/register');
+        }
+
+        if ($needsVerification) {
+            $token = bin2hex(random_bytes(32));
+            $ttl = max(5, (int) setting('mail.verify_ttl_minutes', 60));
+            $db->execute(
+                'INSERT INTO email_verifications (user_id, token_hash, expires_at)
+                 VALUES (?, ?, now() + (?::int * interval \'1 minute\'))',
+                [(int) $user['id'], hash('sha256', $token), $ttl]
+            );
+            $link = rtrim((string) cfg('app.url', ''), '/') . '/verify-email?token=' . $token;
+            $siteName = (string) setting('site.name', 'OpenCode Relay');
+            $html = '<p>' . htmlspecialchars($username, ENT_QUOTES, 'UTF-8') . '，你好：</p>'
+                . '<p>请点击下面的链接验证邮箱并完成注册，链接 ' . $ttl . ' 分钟内有效：</p>'
+                . '<p><a href="' . htmlspecialchars($link, ENT_QUOTES, 'UTF-8') . '">' . htmlspecialchars($link, ENT_QUOTES, 'UTF-8') . '</a></p>'
+                . '<p>如果这不是你本人的操作，请忽略这封邮件。</p>'
+                . '<p>— ' . htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8') . '</p>';
+            if (!$mailer->send($email, '验证你的邮箱 · ' . $siteName, $html)) {
+                $db->execute('DELETE FROM users WHERE id = ?', [(int) $user['id']]);
+                flash('error', '验证邮件发送失败：' . ($mailer->lastError() ?: 'SMTP error') . ' 请稍后重试或联系管理员。');
+                Response::redirect('/register');
+            }
+            flash('success', '验证邮件已发送到 ' . $email . '，请点击邮件中的链接完成注册。');
+            Response::redirect('/login');
         }
 
         if ($requireApproval) {
@@ -181,6 +201,36 @@ final class AuthController extends Controller
         Auth::login($user, $request->ip());
         flash('success', 'Welcome. Create an API key to get started.');
         Response::redirect('/dashboard');
+    }
+
+    public function verifyEmail(Request $request): never
+    {
+        $token = trim((string) $request->query('token', ''));
+        if (!preg_match('/^[a-f0-9]{64}$/', $token)) {
+            flash('error', '验证链接无效或已过期。');
+            Response::redirect('/login');
+        }
+        $db = App::db();
+        $row = $db->fetch(
+            'SELECT * FROM email_verifications WHERE token_hash = ? AND used_at IS NULL AND expires_at > now()',
+            [hash('sha256', $token)]
+        );
+        if ($row === null) {
+            flash('error', '验证链接无效或已过期。');
+            Response::redirect('/login');
+        }
+        $db->transaction(function () use ($db, $row): void {
+            $db->execute('UPDATE email_verifications SET used_at = now() WHERE id = ?', [$row['id']]);
+            $db->execute(
+                "UPDATE users SET status = 'active',
+                        metadata = coalesce(metadata, '{}'::jsonb) || '{\"email_verified\": true}'::jsonb
+                  WHERE id = ?",
+                [$row['user_id']]
+            );
+        });
+        $this->audit('user.email_verified', 'user', (string) $row['user_id']);
+        flash('success', '邮箱验证成功，请登录。');
+        Response::redirect('/login');
     }
 
     public function logout(Request $request): never

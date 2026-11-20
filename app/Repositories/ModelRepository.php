@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Relay\Repositories;
 
+use Relay\Services\Thinking;
 use Relay\Support\Database;
 
 final class ModelRepository
@@ -15,7 +16,12 @@ final class ModelRepository
     /** @return list<array<string,mixed>> */
     public function all(): array
     {
-        return $this->db->fetchAll('SELECT * FROM model_catalog ORDER BY is_free DESC, sort_order, name');
+        return $this->db->fetchAll('SELECT * FROM model_catalog WHERE is_free = true ORDER BY sort_order, name');
+    }
+
+    public function deleteNonFree(): int
+    {
+        return $this->db->execute('DELETE FROM model_catalog WHERE is_free = false');
     }
 
     /** @return list<array<string,mixed>> */
@@ -95,8 +101,8 @@ final class ModelRepository
             'INSERT INTO model_catalog
                 (id, name, provider, description, family, type, is_free, available, enabled, upstream_kind,
                  upstream_base_url, context_limit, output_limit, input_price, output_price, capabilities,
-                 modalities, api, raw, sort_order)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb, 0)
+                 thinking, modalities, api, raw, sort_order)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb, 0)
              ON CONFLICT (id) DO UPDATE SET
                 name = EXCLUDED.name,
                 provider = EXCLUDED.provider,
@@ -112,6 +118,7 @@ final class ModelRepository
                 input_price = EXCLUDED.input_price,
                 output_price = EXCLUDED.output_price,
                 capabilities = EXCLUDED.capabilities,
+                thinking = EXCLUDED.thinking,
                 modalities = EXCLUDED.modalities,
                 api = EXCLUDED.api,
                 raw = EXCLUDED.raw,
@@ -134,6 +141,7 @@ final class ModelRepository
                 $inputPrice,
                 $outputPrice,
                 json_encode($model['capabilities'] ?? [], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+                json_encode(Thinking::normalize($model), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
                 json_encode($model['modalities'] ?? [], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
                 json_encode($model['api'] ?? [], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
                 json_encode($model, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
@@ -221,7 +229,7 @@ final class ModelRepository
 
     public function updateConfig(string $id, array $data): void
     {
-        $allowed = ['enabled', 'credit_per_request', 'credit_per_1k_input', 'credit_per_1k_output', 'credit_multiplier', 'sort_order'];
+        $allowed = ['enabled', 'sort_order'];
         $sets = [];
         $params = [];
         foreach ($allowed as $field) {

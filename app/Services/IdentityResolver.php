@@ -9,18 +9,21 @@ use Relay\Support\Crypto;
 use Relay\Support\Settings;
 
 /**
- * Reproduces the identity headers the official OpenCode client attaches to a
- * model request. It never alters system prompts or messages.
+ * 复刻官方 OpenCode 客户端在模型请求上携带的身份头。
  *
- * Source: OpenCode 2.3.0 `SessionModelRequest.prepare`:
- *   headers: x-opencode-session-id, x-opencode-parent-session-id,
- *            x-session-affinity, X-Session-Id, x-parent-session-id,
- *            User-Agent: opencode/{channel}/{version}/{client},
- *            x-opencode-project, x-opencode-session, x-opencode-client
- *   promptCacheKey: affinity without the "ses_" prefix when it is 64 hex.
+ * 2026-11 起上游对免费通道做了请求形状准入：`x-opencode-session` 必须是
+ * 官方 `Identifier.descending()` 布局（`ses_` + 12 位 hex + 14 位 base62，
+ * 共 30 字符，hex 低 3 位恒为 `ffe`，解码时间需在 ±30 天内），否则同样返回
+ * `429 FreeUsageLimitError`。这里负责生成/规范化该 id。
+ *
+ * 官方 1.19.6 CLI 实际发送的头只有：
+ *   x-opencode-client, x-opencode-project, x-opencode-request,
+ *   x-opencode-session, x-opencode-session-id, User-Agent
  */
 final class IdentityResolver
 {
+    private const BASE62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+
     public function __construct(private Settings $settings)
     {
     }
@@ -39,40 +42,23 @@ final class IdentityResolver
 
         $sessionId = $affinity;
         $explicitSession = $request->header('x-opencode-session-id');
-        if ($explicitSession !== null) {
-            $explicitSession = trim($explicitSession);
-            if (preg_match('/^ses_[0-9a-f]{64}$/i', $explicitSession)) {
-                $sessionId = strtolower($explicitSession);
-            } elseif (preg_match('/^ses_[0-9A-Za-z]{26}$/', $explicitSession)) {
-                $sessionId = $explicitSession;
-            }
+        if ($explicitSession !== null && trim($explicitSession) !== '') {
+            $sessionId = $this->normalizeSession(trim($explicitSession));
         }
 
         $project = $request->header('x-opencode-project');
         if ($project === null || !preg_match('/^[A-Za-z0-9_.:-]{4,128}$/', trim($project))) {
-            $project = 'prj_' . substr(Crypto::hmac((string) ($apiKey['id'] ?? 'anonymous'), 'project'), 0, 32);
+            $project = $this->settings->string('upstream.project_id', 'global');
         }
 
-        $bodyKey = $body['prompt_cache_key'] ?? null;
-        if (is_string($bodyKey) && preg_match('/^[A-Za-z0-9_-]{8,128}$/', $bodyKey)) {
-            $promptCacheKey = $bodyKey;
-        } elseif (preg_match('/^ses_([0-9a-f]{64})$/i', $affinity, $m)) {
-            $promptCacheKey = strtolower($m[1]);
-        } elseif (preg_match('/^ses_[0-9A-Za-z]{26}$/', $affinity)) {
-            // Official clients with the short session ID format pass the full
-            // `ses_...` value as prompt_cache_key (the 64-hex strip only
-            // applies to the longer format).
-            $promptCacheKey = $affinity;
-        } else {
-            $promptCacheKey = substr(Crypto::hmac($affinity, 'cache'), 0, 64);
-        }
+        $promptCacheKey = preg_match('/^ses_(.{26})$/', $affinity, $m) === 1
+            ? $m[1]
+            : substr(Crypto::hmac($affinity, 'cache'), 0, 64);
 
         $clientName = $this->settings->string('upstream.client_name', 'cli');
-        $channel = $this->settings->string('upstream.client_channel', 'latest');
-        $version = $this->settings->string('upstream.client_version', '2.3.0');
         $userAgent = $this->settings->string('upstream.user_agent', '');
-        if ($userAgent === '') {
-            $userAgent = 'opencode/' . $channel . '/' . $version . '/' . $clientName;
+        if (trim($userAgent) === '') {
+            $userAgent = 'opencode/1.19.6 ai-sdk/provider-utils/4.0.23 runtime/bun/1.4.4';
         }
 
         return new RelayIdentity(
@@ -89,9 +75,9 @@ final class IdentityResolver
     private function pickSessionCandidate(Request $request, array $body): ?string
     {
         $headers = [
-            $request->header('x-session-affinity'),
             $request->header('x-opencode-session'),
             $request->header('x-opencode-session-id'),
+            $request->header('x-session-affinity'),
             $request->header('x-session-id'),
             $request->header('x-relay-session'),
         ];
@@ -115,49 +101,66 @@ final class IdentityResolver
         return null;
     }
 
+    /** 把任意调用方 session 值收敛成官方 30 字符 canonical id。 */
     private function normalizeSession(string $value): string
     {
         $value = trim($value);
-        if (preg_match('/^ses_[0-9a-f]{64}$/i', $value)) {
-            return strtolower($value);
-        }
-        if (preg_match('/^ses_[0-9A-Za-z]{26}$/', $value)) {
+        if (preg_match('/^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$/', $value) === 1) {
             return $value;
         }
-        if (preg_match('/^[0-9a-f]{64}$/i', $value)) {
-            return 'ses_' . strtolower($value);
+        if (preg_match('/^ses_([0-9a-f]{12})[0-9A-Za-z]{14}$/i', $value) === 1) {
+            return $value;
         }
-        if (preg_match('/^[A-Za-z0-9_.:-]{1,160}$/', $value)) {
-            return 'ses_' . Crypto::hmac($value, 'session');
+        return $this->canonicalSession($value);
+    }
+
+    /**
+     * 生成 canonical session：48 位载荷 = ~((ms << 12) | 1)，低 3 位因此恒为 ffe。
+     * 时间位按 UTC 日粒度从种子推导（offset 0..6 天），因此同一天同一会话稳定、
+     * 始终落在上游 ±30 天窗口内。
+     */
+    private function canonicalSession(string $seed): string
+    {
+        $hash = substr(Crypto::hmac($seed, 'session'), 0, 16);
+        $dayMs = 86400000;
+        $dayOffset = (int) (hexdec(substr($hash, 0, 4)) % 7);
+        $todayMs = (int) (floor(microtime(true) * 1000 / $dayMs)) * $dayMs;
+        $ms = $todayMs - $dayOffset * $dayMs;
+        $payload = (($ms << 12) | 1) & 0xFFFFFFFFFFFF;
+        $value = (~$payload) & 0xFFFFFFFFFFFF;
+        $hex = str_pad(dechex($value), 12, '0', STR_PAD_LEFT);
+
+        $slug = '';
+        for ($i = 0; $i < 14; $i++) {
+            $byte = (int) hexdec(substr($hash, ($i * 2) % 16, 2));
+            $slug .= self::BASE62[($byte + $i) % 62];
         }
-        return 'ses_' . Crypto::hmac($value, 'session');
+        return 'ses_' . substr($hex, -12) . $slug;
     }
 
     /** @param array<string,mixed> $body */
     private function deriveSession(Request $request, array $body, array $apiKey, array $user): string
     {
-        $system = $body['system'] ?? $body['instructions'] ?? '';
         $messages = $body['messages'] ?? $body['input'] ?? [];
         $firstUser = '';
         if (is_array($messages)) {
             foreach ($messages as $message) {
                 if (is_array($message) && ($message['role'] ?? '') === 'user') {
-                    $firstUser = $message['content'] ?? '';
+                    $firstUser = is_string($message['content'] ?? null) ? $message['content'] : '';
                     break;
                 }
             }
         }
-        $seed = json_encode([
+        $seed = (string) json_encode([
             'key' => (string) ($apiKey['id'] ?? ''),
             'user' => (string) ($user['id'] ?? ''),
             'model' => (string) ($body['model'] ?? ''),
-            'system' => $system,
             'first_user' => $firstUser,
             'ua' => $request->userAgent(),
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        if (!is_string($seed) || $seed === '') {
+        if ($seed === '') {
             $seed = bin2hex(random_bytes(16));
         }
-        return 'ses_' . Crypto::hmac($seed, 'session');
+        return $this->canonicalSession($seed);
     }
 }

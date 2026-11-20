@@ -32,9 +32,9 @@ final class ApiKeyRepository
     public function findByHash(string $hash): ?array
     {
         return $this->db->fetch(
-            'SELECT k.*, u.username, u.email, u.role, u.status AS user_status, u.plan_id, u.balance,
+            'SELECT k.*, u.username, u.email, u.role, u.status AS user_status, u.plan_id,
                     p.code AS plan_code, p.name AS plan_name, p.daily_requests, p.daily_tokens, p.rpm,
-                    p.concurrency, p.allowed_models, p.discount_multiplier
+                    p.concurrency, p.allowed_models
              FROM api_keys k
              JOIN users u ON u.id = k.user_id
              LEFT JOIN plans p ON p.id = u.plan_id
@@ -46,7 +46,10 @@ final class ApiKeyRepository
     /** @return list<array<string,mixed>> */
     public function forUser(int $userId): array
     {
-        return $this->db->fetchAll('SELECT * FROM api_keys WHERE user_id = ? ORDER BY id DESC', [$userId]);
+        return $this->db->fetchAll(
+            "SELECT * FROM api_keys WHERE user_id = ? AND status = 'active' ORDER BY id DESC",
+            [$userId]
+        );
     }
 
     public function find(int $id): ?array
@@ -54,20 +57,14 @@ final class ApiKeyRepository
         return $this->db->fetch('SELECT * FROM api_keys WHERE id = ?', [$id]);
     }
 
-    public function revoke(int $id, int $userId): bool
+    public function delete(int $id, int $userId): bool
     {
-        return $this->db->execute(
-            'UPDATE api_keys SET status = \'revoked\', revoked_at = now() WHERE id = ? AND user_id = ? AND status = \'active\'',
-            [$id, $userId]
-        ) > 0;
+        return $this->db->execute('DELETE FROM api_keys WHERE id = ? AND user_id = ?', [$id, $userId]) > 0;
     }
 
-    public function revokeAsAdmin(int $id): bool
+    public function deleteAsAdmin(int $id): bool
     {
-        return $this->db->execute(
-            'UPDATE api_keys SET status = \'revoked\', revoked_at = now() WHERE id = ? AND status = \'active\'',
-            [$id]
-        ) > 0;
+        return $this->db->execute('DELETE FROM api_keys WHERE id = ?', [$id]) > 0;
     }
 
     public function touch(int $id): void

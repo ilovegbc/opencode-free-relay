@@ -31,7 +31,7 @@ final class IpAllocator
     {
         $pools = $this->pools->enabled();
         if ($pools === []) {
-            throw new Ipv6UnavailableException('No enabled IPv6 pool is configured. Add one in Admin → IPv6 pools.', 'no_ipv6_pool');
+            throw new Ipv6UnavailableException('No enabled IPv6 pool is configured.', 'no_ipv6_pool');
         }
 
         $allowLoopback = $this->settings->bool('ipv6.allow_loopback', false);

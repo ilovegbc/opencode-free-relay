@@ -5,7 +5,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title><?= e($title ?? $siteName ?? 'OpenCode Free Relay') ?></title>
-    <meta name="description" content="<?= e($siteDescription ?? 'OpenCode free models over rotating IPv6.') ?>">
+    <meta name="description" content="<?= e($siteDescription ?? 'OpenCode 免费模型，兼容 OpenAI 接口。') ?>">
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#fbf9f5" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#181817" media="(prefers-color-scheme: dark)">
@@ -31,7 +31,6 @@
                 <nav class="nav" data-nav aria-label="页面导航">
                     <a class="<?= ($activeNav ?? '') === 'home' ? 'active' : '' ?>" href="<?= e(url('/')) ?>">首页</a>
                     <a class="<?= ($activeNav ?? '') === 'docs' ? 'active' : '' ?>" href="<?= e(url('/docs')) ?>">API 文档</a>
-                    <a class="<?= ($activeNav ?? '') === 'status' ? 'active' : '' ?>" href="<?= e(url('/status')) ?>">状态</a>
                     <?php if (!empty($user)): ?>
                         <a class="<?= str_starts_with((string) ($activeNav ?? ''), 'dashboard') ? 'active' : '' ?>" href="<?= e(url('/dashboard')) ?>">控制台</a>
                         <?php if (($user['role'] ?? '') === 'admin'): ?>
@@ -61,7 +60,6 @@
 
     <footer class="footer">
         <span><?= e($footer ?? '') ?></span>
-        <span class="muted">IPv6 only · no IPv4 fallback · MIT</span>
     </footer>
 </div>
 <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>

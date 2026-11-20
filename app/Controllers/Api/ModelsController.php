@@ -12,6 +12,7 @@ use Relay\Http\Request;
 use Relay\Http\Response;
 use Relay\Repositories\ApiKeyRepository;
 use Relay\Repositories\ModelRepository;
+use Relay\Services\Thinking;
 
 final class ModelsController extends Controller
 {
@@ -39,7 +40,12 @@ final class ModelsController extends Controller
         } elseif (!App::settings()->bool('site.public_model_list', true)) {
             throw new AuthenticationException();
         }
-        $model = (new ModelRepository(App::db()))->resolve((string) ($params['id'] ?? ''));
+        [$modelId] = Thinking::splitModelId((string) ($params['id'] ?? ''));
+        $models = new ModelRepository(App::db());
+        $model = $models->resolve($modelId);
+        if ($model === null) {
+            $model = $models->resolve((string) ($params['id'] ?? ''));
+        }
         if ($model === null || !$model['is_free'] || !$model['enabled'] || !$model['available']) {
             throw new \Relay\Http\HttpException(404, 'Model not found.', 'model_not_found');
         }
@@ -65,9 +71,10 @@ final class ModelsController extends Controller
             'pricing' => [
                 'prompt' => '0',
                 'completion' => '0',
-                'request' => (string) ($model['credit_per_request'] ?? '0'),
+                'request' => '0',
             ],
             'capabilities' => json_decode((string) ($model['capabilities'] ?? '{}'), true) ?: new \stdClass(),
+            'thinking' => Thinking::forModel($model),
         ];
     }
 }

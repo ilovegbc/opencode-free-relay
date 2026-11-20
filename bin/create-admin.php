@@ -79,6 +79,5 @@ $user = $users->create([
     'role' => 'admin',
     'status' => 'active',
     'plan_id' => $plan['id'],
-    'balance' => 0,
 ]);
 echo "Created admin #{$user['id']} ({$username}).\n";

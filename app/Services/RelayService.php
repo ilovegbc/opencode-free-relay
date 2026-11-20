@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Relay\Services;
 
+use Relay\App;
 use Relay\Http\HttpException;
 use Relay\Http\Request;
 use Relay\Http\Response;
 use Relay\Repositories\LogRepository;
+use Relay\Repositories\ModelRepository;
 use Relay\Services\IpAllocator;
 use Relay\Services\Ipv6UnavailableException;
 use Relay\Support\Logger;
@@ -29,7 +31,6 @@ final class RelayService
         private IpAllocator $allocator,
         private OpenCodeClient $client,
         private QuotaService $quota,
-        private BillingService $billing,
         private LogRepository $logs,
     ) {
     }
@@ -65,8 +66,9 @@ final class RelayService
                 $lease = $this->allocator->allocate($requestId, $excludeAddresses, $excludePoolIds);
             } catch (Ipv6UnavailableException $e) {
                 $this->quota->fail($reservation);
+                Logger::warning('Source address allocation failed', ['reason' => $e->reason, 'detail' => $e->getMessage(), 'request_id' => $requestId]);
                 $this->logFailure($request, $user, $key, $model, $endpoint, $isStream, $requestId, 503, 'ipv6_unavailable', $e->getMessage(), $attempts, $lastLease, $startedAt, $requestBytes, $identity);
-                throw new HttpException(503, $e->getMessage(), $e->reason);
+                throw new HttpException(503, 'Service temporarily unavailable. Please try again later.', 'service_unavailable');
             }
 
             $lastLease = $lease;
@@ -126,9 +128,8 @@ final class RelayService
 
                 if (!$isStream) {
                     $usage = $parser->finish($result->body);
-                    $credits = $this->billing->calculate($model, $usage, $user);
-                    $this->quota->commit($reservation, $usage, $credits);
-                    $this->logSuccess($request, $user, $key, $model, $endpoint, false, $requestId, $result, $usage, $credits, count($attempts), $lease, $startedAt, $requestBytes, $identity);
+                    $this->quota->commit($reservation, $usage);
+                    $this->logSuccess($request, $user, $key, $model, $endpoint, false, $requestId, $result, $usage, count($attempts), $lease, $startedAt, $requestBytes, $identity);
                     $status = $result->status >= 200 && $result->status < 300 ? 200 : $result->status;
                     Response::raw($result->body, $status, [
                         'Content-Type' => $result->headers['content-type'] ?? 'application/json; charset=utf-8',
@@ -146,15 +147,14 @@ final class RelayService
                     }
                 }
                 $usage = $parser->finish();
-                $credits = $this->billing->calculate($model, $usage, $user);
                 try {
-                    $this->quota->commit($reservation, $usage, $credits);
+                    $this->quota->commit($reservation, $usage);
                 } catch (\Throwable $e) {
                     // Headers are already sent. Do not corrupt the SSE body
                     // with an error; the reservation expires automatically.
                     Logger::error('Could not commit streaming quota', ['message' => $e->getMessage(), 'request_id' => $requestId]);
                 }
-                $this->logSuccess($request, $user, $key, $model, $endpoint, true, $requestId, $result, $usage, $credits, count($attempts), $lease, $startedAt, $requestBytes, $identity);
+                $this->logSuccess($request, $user, $key, $model, $endpoint, true, $requestId, $result, $usage, count($attempts), $lease, $startedAt, $requestBytes, $identity);
                 exit;
             }
 
@@ -190,13 +190,16 @@ final class RelayService
 
             $this->quota->fail($reservation);
             [$clientStatus, $code, $message] = $this->mapUpstreamFailure($result);
+            if ($result->status === 410) {
+                $this->disableDeprecatedModel((string) ($model['id'] ?? ''));
+            }
             $this->logFailure($request, $user, $key, $model, $endpoint, $isStream, $requestId, $clientStatus, $code, $message, $attempts, $lease, $startedAt, $requestBytes, $identity);
             throw new UpstreamException($message, $result->status, $code, $result->retryable(), $result->body, $attempts);
         }
 
         $this->quota->fail($reservation);
-        $this->logFailure($request, $user, $key, $model, $endpoint, $isStream, $requestId, 502, 'upstream_error', 'All IPv6 attempts failed.', $attempts, $lastLease, $startedAt, $requestBytes, $identity);
-        throw new UpstreamException('All IPv6 attempts failed. No IPv4 fallback was attempted.', $lastResult?->status ?? 0, 'ipv6_all_attempts_failed', true, $lastResult?->body ?? '', $attempts);
+        $this->logFailure($request, $user, $key, $model, $endpoint, $isStream, $requestId, 502, 'upstream_error', 'All source address attempts failed.', $attempts, $lastLease, $startedAt, $requestBytes, $identity);
+        throw new UpstreamException('Service temporarily unavailable. Please try again later.', $lastResult?->status ?? 0, 'service_unavailable', true, $lastResult?->body ?? '', $attempts);
     }
 
     /** @param array<string,string> $headers */
@@ -280,7 +283,6 @@ final class RelayService
         string $requestId,
         UpstreamResult $result,
         array $usage,
-        float $credits,
         int $attemptCount,
         IpLease $lease,
         float $startedAt,
@@ -306,7 +308,6 @@ final class RelayService
                 'output_tokens' => $usage['output_tokens'] ?? 0,
                 'total_tokens' => $usage['total_tokens'] ?? 0,
                 'cached_tokens' => $usage['cached_tokens'] ?? 0,
-                'credits' => $credits,
                 'latency_ms' => (int) round((microtime(true) - $startedAt) * 1000),
                 'first_byte_ms' => $result->firstByteMs,
                 'client_ip' => filter_var($request->ip(), FILTER_VALIDATE_IP) ? $request->ip() : null,
@@ -317,6 +318,19 @@ final class RelayService
             ]);
         } catch (\Throwable $e) {
             Logger::error('Could not persist request log', ['message' => $e->getMessage(), 'request_id' => $requestId]);
+        }
+    }
+
+    /** 上游已下架（410）的模型直接从可用列表里摘掉，避免客户端反复踩坑。 */
+    private function disableDeprecatedModel(string $modelId): void
+    {
+        if ($modelId === '') {
+            return;
+        }
+        try {
+            (new ModelRepository(App::db()))->setEnabled($modelId, false);
+        } catch (\Throwable $e) {
+            Logger::warning('Could not disable deprecated model', ['model' => $modelId, 'message' => $e->getMessage()]);
         }
     }
 
@@ -349,6 +363,11 @@ final class RelayService
         }
         if ($result->status === 429) {
             return [429, $code, $message];
+        }
+        if ($result->status === 410) {
+            // 上游已下架的模型：给客户端 404，避免它把 502 当成网关故障。
+            $deprecated = str_contains(strtolower($code), 'deprecated') ? $code : 'model_deprecated';
+            return [404, $deprecated, $message];
         }
         if ($result->status === 401 || $result->status === 403) {
             return [502, 'upstream_auth_error', $message];

@@ -20,10 +20,9 @@ final class RelayIdentity
     /** @return array<string,string> */
     public function headers(): array
     {
+        // 只发送官方 1.19.6 CLI 实际发出的头；多余头在免费通道准入里没有收益。
         $headers = [
             'x-opencode-session-id' => $this->sessionId,
-            'x-session-affinity' => $this->affinity,
-            'X-Session-Id' => $this->affinity,
             'x-opencode-project' => $this->projectId,
             'x-opencode-session' => $this->affinity,
             'x-opencode-client' => $this->clientName,
@@ -31,7 +30,6 @@ final class RelayIdentity
         ];
         if ($this->parentSessionId !== null && $this->parentSessionId !== '') {
             $headers['x-opencode-parent-session-id'] = $this->parentSessionId;
-            $headers['x-parent-session-id'] = $this->parentSessionId;
         }
         return $headers;
     }

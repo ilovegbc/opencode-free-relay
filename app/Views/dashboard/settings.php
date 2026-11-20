@@ -37,3 +37,22 @@
         <p class="help">如需修改用户名、邮箱或套餐，请联系管理员。</p>
     </aside>
 </div>
+
+<div class="card" style="margin-top:1rem;border-color:rgba(231,76,60,.45)">
+    <h2>注销账户</h2>
+    <p class="muted small">注销后账户、API Key 与请求记录将永久删除，无法恢复。</p>
+    <form method="post" action="<?= e(url('/dashboard/settings/delete')) ?>" data-confirm="确定永久注销账户？此操作不可恢复。">
+        <?= csrf_field() ?>
+        <div class="form-grid">
+            <div class="form-row">
+                <label for="delete_password">当前密码</label>
+                <input id="delete_password" name="password" type="password" autocomplete="current-password" required>
+            </div>
+            <div class="form-row">
+                <label for="delete_confirm">输入 DELETE 确认</label>
+                <input id="delete_confirm" name="confirm" type="text" placeholder="DELETE" pattern="DELETE" required>
+            </div>
+        </div>
+        <button class="button danger" type="submit">永久注销账户</button>
+    </form>
+</div>

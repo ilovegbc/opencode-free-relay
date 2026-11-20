@@ -18,7 +18,7 @@
     </div>
 <?php endif; ?>
 
-<div class="grid grid-2">
+<div>
     <div class="card">
         <h2>账户设置</h2>
         <form method="post" action="<?= e(url('/admin/users/' . $account['id'])) ?>">
@@ -51,29 +51,12 @@
         </form>
     </div>
 
-    <div class="card">
-        <h2>积分</h2>
-        <p class="muted">当前余额：<strong><?= e(format_credits($account['balance'])) ?></strong></p>
-        <form method="post" action="<?= e(url('/admin/users/' . $account['id'] . '/balance')) ?>">
-            <?= csrf_field() ?>
-            <div class="form-grid">
-                <div class="form-row"><label>增减金额（可为负）</label><input name="delta" type="number" step="0.0001" required></div>
-                <div class="form-row"><label>备注</label><input name="note" type="text" placeholder="manual adjustment"></div>
-            </div>
-            <button class="button small" type="submit">调整余额</button>
-        </form>
-        <h3 style="margin-top:1.2rem">最近积分流水</h3>
-        <div class="table-wrap">
-            <table>
-                <thead><tr><th>时间</th><th>金额</th><th>类型</th><th>余额</th></tr></thead>
-                <tbody>
-                <?php foreach ($credits as $tx): ?>
-                    <tr><td class="small"><?= e(format_dt($tx['created_at'], 'm-d H:i')) ?></td><td class="small"><?= e(format_credits($tx['amount'])) ?></td><td class="small"><?= e($tx['kind']) ?></td><td class="small"><?= e(format_credits($tx['balance_after'])) ?></td></tr>
-                <?php endforeach; ?>
-                <?php if (empty($credits)): ?><tr><td colspan="4" class="muted small">暂无流水</td></tr><?php endif; ?>
-                </tbody>
-            </table>
-        </div>
+    <div class="card" style="margin-top:1rem">
+        <h2>额度与套餐</h2>
+        <p class="muted">当前套餐：<strong><?= e($account['plan_name'] ?? '—') ?></strong> ·
+            每日请求 <?= (int) ($account['daily_requests'] ?? -1) < 0 ? '不限' : e(format_number((int) $account['daily_requests'])) ?> ·
+            <?= e((string) ($account['rpm'] ?? 0)) ?> RPM ·
+            <?= e((string) ($account['concurrency'] ?? 0)) ?> 并发</p>
     </div>
 </div>
 
@@ -93,16 +76,14 @@
                 <tr>
                     <td><?= e($key['name']) ?></td>
                     <td class="mono small"><?= e($key['prefix']) ?>…</td>
-                    <td><span class="badge <?= $key['status'] === 'active' ? 'green' : 'red' ?>"><?= e($key['status']) ?></span></td>
+                    <td><span class="badge green">active</span></td>
                     <td class="small"><?= e(time_ago($key['last_used_at'])) ?></td>
                     <td class="small"><?= e(format_number((int) $key['request_count'])) ?></td>
                     <td>
-                        <?php if ($key['status'] === 'active'): ?>
-                            <form method="post" action="<?= e(url('/admin/users/' . $account['id'] . '/keys/' . $key['id'] . '/revoke')) ?>" data-confirm="吊销这个 Key？" class="inline-form">
-                                <?= csrf_field() ?>
-                                <button class="button danger small" type="submit">吊销</button>
-                            </form>
-                        <?php endif; ?>
+                        <form method="post" action="<?= e(url('/admin/users/' . $account['id'] . '/keys/' . $key['id'] . '/delete')) ?>" data-confirm="删除后该 Key 立即失效，确定删除？" class="inline-form">
+                            <?= csrf_field() ?>
+                            <button class="button danger small" type="submit">删除</button>
+                        </form>
                     </td>
                 </tr>
             <?php endforeach; ?>
@@ -132,4 +113,13 @@
             </tbody>
         </table>
     </div>
+</div>
+
+<div class="card" style="margin-top:1rem;border-color:rgba(231,76,60,.45)">
+    <h2>危险操作</h2>
+    <p class="muted small">删除后该用户的 API Key 与请求日志会一并清除，且不可恢复。</p>
+    <form method="post" action="<?= e(url('/admin/users/' . $account['id'] . '/delete')) ?>" data-confirm="确定永久删除用户 <?= e($account['username']) ?>？此操作不可恢复。" class="inline-form">
+        <?= csrf_field() ?>
+        <button class="button danger small" type="submit">删除用户</button>
+    </form>
 </div>
